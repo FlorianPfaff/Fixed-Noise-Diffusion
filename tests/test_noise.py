@@ -1,5 +1,4 @@
 import torch
-
 from fixed_noise_diffusion.noise import FixedPoolNoiseSampler, GaussianNoiseSampler
 
 
@@ -25,4 +24,3 @@ def test_gaussian_sampler_shape():
     noise = sampler.sample(5)
     assert noise.shape == (5, 3, 8, 8)
     assert noise.dtype == torch.float32
-

@@ -7,7 +7,9 @@ import torch
 from torch import nn
 
 
-def _linear_beta_schedule(timesteps: int, beta_start: float, beta_end: float) -> torch.Tensor:
+def _linear_beta_schedule(
+    timesteps: int, beta_start: float, beta_end: float
+) -> torch.Tensor:
     return torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float32)
 
 
@@ -20,7 +22,9 @@ def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> torch.Tensor:
     return betas.clamp(0.0001, 0.9999)
 
 
-def _extract(values: torch.Tensor, timesteps: torch.Tensor, target_shape: torch.Size) -> torch.Tensor:
+def _extract(
+    values: torch.Tensor, timesteps: torch.Tensor, target_shape: torch.Size
+) -> torch.Tensor:
     out = values.gather(0, timesteps)
     return out.reshape(timesteps.shape[0], *((1,) * (len(target_shape) - 1)))
 
@@ -54,11 +58,17 @@ class GaussianDiffusion:
         self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod).to(device)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod).to(device)
         self.sqrt_recip_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod).to(device)
-        self.sqrt_recipm1_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod - 1).to(device)
+        self.sqrt_recipm1_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod - 1).to(
+            device
+        )
 
-        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
         self.posterior_variance = posterior_variance.to(device)
-        self.posterior_log_variance_clipped = posterior_variance.clamp_min(1e-20).log().to(device)
+        self.posterior_log_variance_clipped = (
+            posterior_variance.clamp_min(1e-20).log().to(device)
+        )
         self.posterior_mean_coef1 = (
             betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         ).to(device)
@@ -77,10 +87,13 @@ class GaussianDiffusion:
             device=device,
         )
 
-    def q_sample(self, x_start: torch.Tensor, timesteps: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+    def q_sample(
+        self, x_start: torch.Tensor, timesteps: torch.Tensor, noise: torch.Tensor
+    ) -> torch.Tensor:
         return (
             _extract(self.sqrt_alphas_cumprod, timesteps, x_start.shape) * x_start
-            + _extract(self.sqrt_one_minus_alphas_cumprod, timesteps, x_start.shape) * noise
+            + _extract(self.sqrt_one_minus_alphas_cumprod, timesteps, x_start.shape)
+            * noise
         )
 
     def predict_start_from_noise(
@@ -109,7 +122,9 @@ class GaussianDiffusion:
             _extract(self.posterior_mean_coef1, timesteps, x_t.shape) * x_start
             + _extract(self.posterior_mean_coef2, timesteps, x_t.shape) * x_t
         )
-        posterior_log_variance = _extract(self.posterior_log_variance_clipped, timesteps, x_t.shape)
+        posterior_log_variance = _extract(
+            self.posterior_log_variance_clipped, timesteps, x_t.shape
+        )
         return model_mean, posterior_log_variance
 
     @torch.no_grad()
@@ -137,8 +152,12 @@ class GaussianDiffusion:
     ) -> torch.Tensor:
         image = torch.randn(shape, device=self.device, generator=generator)
         for time_index in reversed(range(self.num_timesteps)):
-            timesteps = torch.full((shape[0],), time_index, device=self.device, dtype=torch.long)
-            model_mean, model_log_variance = self.p_mean_variance(model, image, timesteps)
+            timesteps = torch.full(
+                (shape[0],), time_index, device=self.device, dtype=torch.long
+            )
+            model_mean, model_log_variance = self.p_mean_variance(
+                model, image, timesteps
+            )
             if time_index == 0:
                 noise = torch.zeros_like(image)
             else:
@@ -163,11 +182,15 @@ class GaussianDiffusion:
             device=self.device,
             dtype=torch.long,
         )
-        prev_times = torch.cat([times[1:], torch.full((1,), -1, device=self.device, dtype=torch.long)])
+        prev_times = torch.cat(
+            [times[1:], torch.full((1,), -1, device=self.device, dtype=torch.long)]
+        )
         image = torch.randn(shape, device=self.device, generator=generator)
 
         for time_index, prev_time_index in zip(times.tolist(), prev_times.tolist()):
-            timesteps = torch.full((shape[0],), time_index, device=self.device, dtype=torch.long)
+            timesteps = torch.full(
+                (shape[0],), time_index, device=self.device, dtype=torch.long
+            )
             pred_noise = model(image, timesteps)
             alpha = self.alphas_cumprod[time_index]
             alpha_prev = (
@@ -177,12 +200,17 @@ class GaussianDiffusion:
             )
             pred_x0 = (image - (1 - alpha).sqrt() * pred_noise) / alpha.sqrt()
             pred_x0 = pred_x0.clamp(-1.0, 1.0)
-            sigma = eta * ((1 - alpha_prev) / (1 - alpha) * (1 - alpha / alpha_prev)).sqrt()
+            sigma = (
+                eta * ((1 - alpha_prev) / (1 - alpha) * (1 - alpha / alpha_prev)).sqrt()
+            )
             direction_scale = (1 - alpha_prev - sigma.square()).clamp_min(0).sqrt()
             if prev_time_index >= 0:
                 noise = torch.randn(shape, device=self.device, generator=generator)
             else:
                 noise = torch.zeros_like(image)
-            image = alpha_prev.sqrt() * pred_x0 + direction_scale * pred_noise + sigma * noise
+            image = (
+                alpha_prev.sqrt() * pred_x0
+                + direction_scale * pred_noise
+                + sigma * noise
+            )
         return image.clamp(-1.0, 1.0)
-

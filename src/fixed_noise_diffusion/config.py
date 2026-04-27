@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-
 DEFAULT_CONFIG: dict[str, Any] = {
     "run_name": "run",
     "output_dir": "runs",
@@ -104,11 +103,15 @@ def apply_override(config: dict[str, Any], override: str) -> None:
     for key in keys[:-1]:
         cursor = cursor.setdefault(key, {})
         if not isinstance(cursor, dict):
-            raise ValueError(f"Cannot set nested key under non-dict override {dotted_key!r}")
+            raise ValueError(
+                f"Cannot set nested key under non-dict override {dotted_key!r}"
+            )
     cursor[keys[-1]] = parse_value(raw_value)
 
 
-def load_config(path: str | Path | None, overrides: list[str] | None = None) -> dict[str, Any]:
+def load_config(
+    path: str | Path | None, overrides: list[str] | None = None
+) -> dict[str, Any]:
     config = deepcopy(DEFAULT_CONFIG)
     if path is not None:
         file_config = _read_yaml_with_inherits(Path(path).resolve())
@@ -126,11 +129,12 @@ def save_config(config: dict[str, Any], path: str | Path) -> None:
 
 
 def add_config_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", type=Path, required=True, help="Path to a YAML config.")
+    parser.add_argument(
+        "--config", type=Path, required=True, help="Path to a YAML config."
+    )
     parser.add_argument(
         "--set",
         action="append",
         default=[],
         help="Override config keys, e.g. --set training.epochs=5",
     )
-

@@ -23,21 +23,29 @@ class SinusoidalTimeEmbedding(nn.Module):
         half = self.dim // 2
         if half <= 1:
             return timesteps.float().unsqueeze(1)
-        exponent = -math.log(10_000) * torch.arange(
-            half,
-            device=timesteps.device,
-            dtype=torch.float32,
-        ) / (half - 1)
+        exponent = (
+            -math.log(10_000)
+            * torch.arange(
+                half,
+                device=timesteps.device,
+                dtype=torch.float32,
+            )
+            / (half - 1)
+        )
         freqs = exponent.exp()
         args = timesteps.float().unsqueeze(1) * freqs.unsqueeze(0)
         embedding = torch.cat([args.sin(), args.cos()], dim=1)
         if embedding.shape[1] < self.dim:
-            embedding = torch.nn.functional.pad(embedding, (0, self.dim - embedding.shape[1]))
+            embedding = torch.nn.functional.pad(
+                embedding, (0, self.dim - embedding.shape[1])
+            )
         return embedding
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, time_dim: int, dropout: float) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, time_dim: int, dropout: float
+    ) -> None:
         super().__init__()
         self.norm1 = nn.GroupNorm(_groups(in_channels), in_channels)
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
@@ -88,7 +96,9 @@ class UNet(nn.Module):
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        self.init_conv = nn.Conv2d(image_channels, base_channels, kernel_size=3, padding=1)
+        self.init_conv = nn.Conv2d(
+            image_channels, base_channels, kernel_size=3, padding=1
+        )
 
         self.time_mlp = nn.Sequential(
             SinusoidalTimeEmbedding(time_emb_dim),
@@ -132,7 +142,9 @@ class UNet(nn.Module):
                 )
             )
 
-        self.final_block = ResidualBlock(base_channels * 2, base_channels, time_emb_dim, dropout)
+        self.final_block = ResidualBlock(
+            base_channels * 2, base_channels, time_emb_dim, dropout
+        )
         self.final_conv = nn.Conv2d(base_channels, image_channels, kernel_size=1)
 
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
@@ -173,4 +185,3 @@ def build_model(config: dict) -> UNet:
         time_emb_dim=int(model_cfg["time_emb_dim"]),
         dropout=float(model_cfg["dropout"]),
     )
-

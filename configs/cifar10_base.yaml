@@ -52,4 +52,3 @@ noise:
   pool_dtype: float16
   pool_chunk_size: 8192
   whiten: false
-

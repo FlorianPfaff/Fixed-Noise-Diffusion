@@ -63,4 +63,3 @@ class Timer:
 
     def elapsed(self) -> float:
         return time.perf_counter() - self.start
-

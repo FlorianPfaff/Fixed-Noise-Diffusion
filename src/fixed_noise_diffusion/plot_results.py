@@ -29,7 +29,9 @@ def plot_runs(run_dirs: list[Path], output: Path) -> None:
         label = run_dir.name
         axes[0].plot(epochs, gaps, marker="o", label=label)
         axes[1].plot(epochs, gaussian_losses, marker="o", label=f"{label} Gaussian")
-        axes[1].plot(epochs, train_losses, marker="x", linestyle="--", label=f"{label} train law")
+        axes[1].plot(
+            epochs, train_losses, marker="x", linestyle="--", label=f"{label} train law"
+        )
         plotted = True
 
     if not plotted:
@@ -52,12 +54,15 @@ def plot_runs(run_dirs: list[Path], output: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot WP2 denoising diagnostics.")
-    parser.add_argument("--runs", nargs="+", type=Path, required=True, help="Run directories.")
-    parser.add_argument("--output", type=Path, default=Path("runs/wp2_denoising_gap.png"))
+    parser.add_argument(
+        "--runs", nargs="+", type=Path, required=True, help="Run directories."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("runs/wp2_denoising_gap.png")
+    )
     args = parser.parse_args()
     plot_runs(args.runs, args.output)
 
 
 if __name__ == "__main__":
     main()
-

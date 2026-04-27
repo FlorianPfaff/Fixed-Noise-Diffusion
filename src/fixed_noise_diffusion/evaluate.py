@@ -9,9 +9,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from .diffusion import GaussianDiffusion
-from .noise import GaussianNoiseSampler, FixedPoolNoiseSampler
+from .noise import FixedPoolNoiseSampler, GaussianNoiseSampler
 from .utils import generator_for
-
 
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
 
@@ -91,7 +90,9 @@ def sample_grid(
         generator=generator,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_image(samples.add(1).mul(0.5).clamp(0, 1), output_path, nrow=max(1, int(count**0.5)))
+    save_image(
+        samples.add(1).mul(0.5).clamp(0, 1), output_path, nrow=max(1, int(count**0.5))
+    )
     return samples
 
 
@@ -115,7 +116,9 @@ def optional_fid_kid(
     fid.update(real_uint8, real=True)
     fid.update(fake_uint8, real=False)
 
-    kid = KernelInceptionDistance(subset_size=min(50, fake_uint8.shape[0]), normalize=False).to(device)
+    kid = KernelInceptionDistance(
+        subset_size=min(50, fake_uint8.shape[0]), normalize=False
+    ).to(device)
     kid.update(real_uint8, real=True)
     kid.update(fake_uint8, real=False)
     kid_mean, kid_std = kid.compute()
@@ -127,7 +130,8 @@ def optional_fid_kid(
 
 
 @torch.no_grad()
-def first_real_batch(loader: DataLoader, device: torch.device, count: int) -> torch.Tensor:
+def first_real_batch(
+    loader: DataLoader, device: torch.device, count: int
+) -> torch.Tensor:
     images, _ = next(iter(loader))
     return images[:count].to(device, non_blocking=True)
-

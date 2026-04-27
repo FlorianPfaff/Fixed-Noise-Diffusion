@@ -7,7 +7,6 @@ import torch
 
 from .utils import generator_for
 
-
 DTYPES = {
     "float16": torch.float16,
     "float32": torch.float32,
@@ -24,7 +23,9 @@ class NoiseInfo:
 
 
 class GaussianNoiseSampler:
-    def __init__(self, image_shape: tuple[int, int, int], device: torch.device, seed: int) -> None:
+    def __init__(
+        self, image_shape: tuple[int, int, int], device: torch.device, seed: int
+    ) -> None:
         self.image_shape = image_shape
         self.device = device
         self.seed = int(seed)
@@ -76,7 +77,9 @@ class FixedPoolNoiseSampler:
         self.info = NoiseInfo(mode, self.pool_size, pool_memory_mb, self.whiten)
 
     def _build_pool(self) -> torch.Tensor:
-        pool = torch.empty((self.pool_size, *self.image_shape), dtype=self.dtype, device="cpu")
+        pool = torch.empty(
+            (self.pool_size, *self.image_shape), dtype=self.dtype, device="cpu"
+        )
         generator = torch.Generator(device="cpu")
         generator.manual_seed(self.pool_seed)
         for start in range(0, self.pool_size, self.chunk_size):
@@ -89,7 +92,7 @@ class FixedPoolNoiseSampler:
             )
             pool[start:end].copy_(chunk.to(dtype=self.dtype))
         if self.whiten:
-            # Per-coordinate moment standardization removes trivial realized-pool mean/std bias.
+            # Remove trivial realized-pool mean/std bias per coordinate.
             work = pool.float()
             mean = work.mean(dim=0, keepdim=True)
             std = work.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
@@ -158,4 +161,3 @@ def make_noise_sampler(
             whiten=whiten,
         )
     raise ValueError(f"Unsupported noise mode {mode!r}")
-

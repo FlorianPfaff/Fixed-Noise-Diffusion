@@ -4,4 +4,3 @@ run_name: cifar10_gaussian_seed0
 noise:
   mode: gaussian
   pool_size:
-

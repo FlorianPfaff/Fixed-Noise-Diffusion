@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 CSV_FIELDS = [
     "type",
     "epoch",
@@ -35,7 +34,9 @@ class MetricLogger:
         self.csv_path = run_dir / "metrics.csv"
         if not self.csv_path.exists():
             with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
+                writer = csv.DictWriter(
+                    handle, fieldnames=CSV_FIELDS, extrasaction="ignore"
+                )
                 writer.writeheader()
 
     def log(self, record: dict[str, Any]) -> None:
@@ -46,6 +47,7 @@ class MetricLogger:
         with self.jsonl_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(clean, sort_keys=True) + "\n")
         with self.csv_path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
+            writer = csv.DictWriter(
+                handle, fieldnames=CSV_FIELDS, extrasaction="ignore"
+            )
             writer.writerow(clean)
-

@@ -6,4 +6,3 @@ def test_smoke_config_loads():
     assert config["data"]["dataset"] == "fake"
     assert config["noise"]["mode"] == "fixed_pool"
     assert config["training"]["max_train_steps"] == 1
-

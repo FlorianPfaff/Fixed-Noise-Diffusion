@@ -47,4 +47,3 @@ noise:
   pool_seed: 999
   pool_dtype: float32
   whiten: false
-

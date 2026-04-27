@@ -16,7 +16,14 @@ from .evaluate import denoising_loss, first_real_batch, optional_fid_kid, sample
 from .logging_utils import MetricLogger
 from .model import build_model
 from .noise import GaussianNoiseSampler, make_noise_sampler
-from .utils import Timer, count_parameters, generator_for, make_run_dir, resolve_device, seed_everything
+from .utils import (
+    Timer,
+    count_parameters,
+    generator_for,
+    make_run_dir,
+    resolve_device,
+    seed_everything,
+)
 
 
 def _should_checkpoint(epoch: int, training_cfg: dict[str, Any]) -> bool:
@@ -202,7 +209,9 @@ def train(config: dict[str, Any]) -> Path:
                             "lr": float(lr),
                             "noise_mode": train_noise_sampler.info.mode,
                             "pool_size": train_noise_sampler.info.pool_size,
-                            "pool_memory_mb": round(train_noise_sampler.info.pool_memory_mb, 3),
+                            "pool_memory_mb": round(
+                                train_noise_sampler.info.pool_memory_mb, 3
+                            ),
                             "seconds": round(timer.elapsed(), 3),
                         }
                     )
@@ -246,7 +255,9 @@ def train(config: dict[str, Any]) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train a CIFAR-10 fixed-noise DDPM run.")
+    parser = argparse.ArgumentParser(
+        description="Train a CIFAR-10 fixed-noise DDPM run."
+    )
     add_config_args(parser)
     args = parser.parse_args()
     config = load_config(args.config, args.set)
@@ -255,4 +266,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

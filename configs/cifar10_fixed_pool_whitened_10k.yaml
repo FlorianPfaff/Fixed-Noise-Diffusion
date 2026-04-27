@@ -5,4 +5,3 @@ noise:
   mode: fixed_pool_whitened
   pool_size: 10000
   whiten: true
-
