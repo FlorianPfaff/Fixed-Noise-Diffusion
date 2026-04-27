@@ -1,0 +1,50 @@
+run_name: smoke
+output_dir: runs_smoke
+seed: 123
+device: cuda
+
+data:
+  dataset: fake
+  image_size: 32
+  channels: 3
+  batch_size: 4
+  eval_batch_size: 4
+  num_workers: 0
+  fake_train_size: 16
+  fake_val_size: 8
+
+model:
+  base_channels: 8
+  channel_mults: [1, 2]
+  time_emb_dim: 32
+  dropout: 0.0
+
+diffusion:
+  num_timesteps: 16
+  beta_schedule: linear
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training:
+  epochs: 1
+  max_train_steps: 1
+  lr: 0.0002
+  amp: false
+  log_interval_steps: 1
+  checkpoint_epochs: [1]
+  save_checkpoint: true
+
+evaluation:
+  denoising_batches: 1
+  sample_count: 4
+  sample_steps: 4
+  sampler: ddim
+  enable_metrics: false
+
+noise:
+  mode: fixed_pool
+  pool_size: 16
+  pool_seed: 999
+  pool_dtype: float32
+  whiten: false
+

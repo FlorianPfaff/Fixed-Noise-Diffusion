@@ -1,0 +1,55 @@
+run_name: cifar10_base
+output_dir: runs
+seed: 0
+device: cuda
+
+data:
+  dataset: cifar10
+  data_dir: data
+  download: true
+  image_size: 32
+  channels: 3
+  batch_size: 128
+  eval_batch_size: 128
+  num_workers: 4
+  subset_size:
+  eval_subset_size: 2048
+
+model:
+  base_channels: 64
+  channel_mults: [1, 2, 2, 4]
+  time_emb_dim: 256
+  dropout: 0.1
+
+diffusion:
+  num_timesteps: 1000
+  beta_schedule: linear
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training:
+  epochs: 50
+  max_train_steps:
+  lr: 0.0002
+  weight_decay: 0.0
+  grad_accum_steps: 1
+  amp: true
+  log_interval_steps: 100
+  checkpoint_epochs: [1, 5, 10, 25, 50]
+  save_checkpoint: true
+
+evaluation:
+  denoising_batches: 16
+  sample_count: 64
+  sample_steps: 50
+  sampler: ddim
+  enable_metrics: false
+
+noise:
+  mode: gaussian
+  pool_size:
+  pool_seed: 4242
+  pool_dtype: float16
+  pool_chunk_size: 8192
+  whiten: false
+

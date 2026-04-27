@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fixed-noise-diffusion"
+version = "0.1.0"
+description = "Minimal CIFAR-10 DDPM stack for fixed Gaussian noise pool experiments."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "pillow>=10.0",
+  "pyyaml>=6.0",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+metrics = [
+  "torchmetrics[image]>=1.4",
+  "torch-fidelity>=0.3",
+]
+test = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
