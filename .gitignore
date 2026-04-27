@@ -7,5 +7,7 @@ __pycache__/
 data/
 runs/
 runs_smoke/
+ci_runs/
+build/
+dist/
 *.egg-info/
-
