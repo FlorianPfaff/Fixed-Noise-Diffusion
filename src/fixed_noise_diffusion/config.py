@@ -66,6 +66,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 }
 
+PACKAGE_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+
 
 def deep_update(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
     for key, value in update.items():
@@ -109,12 +111,32 @@ def apply_override(config: dict[str, Any], override: str) -> None:
     cursor[keys[-1]] = parse_value(raw_value)
 
 
+def resolve_config_path(path: str | Path) -> Path:
+    candidate = Path(path).expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
+
+    if candidate.is_absolute():
+        return candidate
+
+    package_candidates = [PACKAGE_CONFIG_DIR / candidate]
+    if len(candidate.parts) > 1 and candidate.parts[0].lower() == "configs":
+        package_candidates.append(PACKAGE_CONFIG_DIR / Path(*candidate.parts[1:]))
+    package_candidates.append(PACKAGE_CONFIG_DIR / candidate.name)
+
+    for package_candidate in package_candidates:
+        if package_candidate.is_file():
+            return package_candidate.resolve()
+
+    return candidate.resolve()
+
+
 def load_config(
     path: str | Path | None, overrides: list[str] | None = None
 ) -> dict[str, Any]:
     config = deepcopy(DEFAULT_CONFIG)
     if path is not None:
-        file_config = _read_yaml_with_inherits(Path(path).resolve())
+        file_config = _read_yaml_with_inherits(resolve_config_path(path))
         deep_update(config, file_config)
     for override in overrides or []:
         apply_override(config, override)
@@ -130,7 +152,10 @@ def save_config(config: dict[str, Any], path: str | Path) -> None:
 
 def add_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--config", type=Path, required=True, help="Path to a YAML config."
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to a YAML config or a packaged config name.",
     )
     parser.add_argument(
         "--set",

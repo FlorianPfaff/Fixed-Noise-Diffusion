@@ -22,7 +22,7 @@ set `PYTHONPATH=src` before running modules.
 
 ```powershell
 $env:PYTHONPATH = "src"
-py -3.12 -m fixed_noise_diffusion.train --config configs/smoke.yaml
+py -3.12 -m fixed_noise_diffusion.train --config smoke.yaml
 ```
 
 The smoke run uses synthetic images, one train step, one denoising validation
@@ -34,10 +34,16 @@ Run the Gaussian baseline and fixed-pool configs:
 
 ```powershell
 $env:PYTHONPATH = "src"
-py -3.12 -m fixed_noise_diffusion.train --config configs/cifar10_gaussian.yaml
-py -3.12 -m fixed_noise_diffusion.train --config configs/cifar10_fixed_pool_1k.yaml
-py -3.12 -m fixed_noise_diffusion.train --config configs/cifar10_fixed_pool_10k.yaml
-py -3.12 -m fixed_noise_diffusion.train --config configs/cifar10_fixed_pool_100k.yaml
+py -3.12 -m fixed_noise_diffusion.train --config cifar10_gaussian.yaml
+py -3.12 -m fixed_noise_diffusion.train --config cifar10_fixed_pool_1k.yaml
+py -3.12 -m fixed_noise_diffusion.train --config cifar10_fixed_pool_10k.yaml
+py -3.12 -m fixed_noise_diffusion.train --config cifar10_fixed_pool_100k.yaml
+```
+
+The same sweep commands are available in:
+
+```powershell
+.\src\fixed_noise_diffusion\scripts\run_wp2_sweep.ps1
 ```
 
 Each run writes:
@@ -65,4 +71,3 @@ denoising_gap = held_out_gaussian_denoising_loss - training_law_denoising_loss
 For fixed pools, a positive and growing gap means the model is fitting the
 realized reusable noise law better than held-out fresh Gaussian noise. That is
 the first signal of support-limited overspecialization.
-
