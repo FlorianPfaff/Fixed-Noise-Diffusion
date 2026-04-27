@@ -10,4 +10,6 @@ runs_smoke/
 ci_runs/
 build/
 dist/
+megalinter-reports/
+mega-linter.log
 *.egg-info/
