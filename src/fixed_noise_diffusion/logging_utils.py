@@ -23,6 +23,8 @@ CSV_FIELDS = [
     "noise_mode",
     "pool_size",
     "pool_memory_mb",
+    "config_hash",
+    "git_commit",
     "samples_path",
 ]
 

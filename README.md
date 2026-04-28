@@ -50,6 +50,8 @@ Each run writes:
 
 - `metrics.jsonl`: all train/eval events
 - `metrics.csv`: compact spreadsheet-friendly train/eval rows
+- `run_metadata.json`: config hash, Git, Python, Torch, device, seed, and noise info
+- `run_summary.json`: final step, final diagnostic values, and artifact paths
 - `samples/`: checkpoint sample grids
 - `checkpoints/`: model checkpoints and run config
 

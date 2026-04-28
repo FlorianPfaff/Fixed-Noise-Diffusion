@@ -83,13 +83,21 @@ jobs:
 
           run_dir = Path("ci_runs/smoke_py${{ matrix.python-version }}")
           metrics_path = run_dir / "metrics.jsonl"
+          metadata_path = run_dir / "run_metadata.json"
+          summary_path = run_dir / "run_summary.json"
           assert metrics_path.exists(), "missing metrics.jsonl"
+          assert metadata_path.exists(), "missing run_metadata.json"
+          assert summary_path.exists(), "missing run_summary.json"
           rows = [json.loads(line) for line in metrics_path.read_text().splitlines()]
           eval_rows = [row for row in rows if row["type"] == "eval"]
           assert eval_rows, "missing eval row"
           eval_row = eval_rows[-1]
           for key in ("train_den_loss", "gaussian_den_loss", "denoising_gap"):
               assert key in eval_row, f"missing {key}"
+          metadata = json.loads(metadata_path.read_text())
+          summary = json.loads(summary_path.read_text())
+          assert metadata["config_hash"] == summary["config_hash"]
+          assert summary["status"] == "completed"
           assert (run_dir / "checkpoints" / "epoch_0001.pt").exists()
           assert (run_dir / "samples" / "epoch_0001.png").exists()
           print(eval_row)
@@ -109,6 +117,7 @@ jobs:
           name: smoke-py${{ matrix.python-version }}
           path: |
             ci_runs/smoke_py${{ matrix.python-version }}/metrics.*
+            ci_runs/smoke_py${{ matrix.python-version }}/run_*.json
             ci_runs/smoke_py${{ matrix.python-version }}/samples/*.png
 
   package-smoke:

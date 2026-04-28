@@ -13,6 +13,7 @@ from .config import add_config_args, load_config, save_config
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import denoising_loss, first_real_batch, optional_fid_kid, sample_grid
+from .integrity import build_run_metadata, build_run_summary, write_json
 from .logging_utils import MetricLogger
 from .model import build_model
 from .noise import GaussianNoiseSampler, make_noise_sampler
@@ -49,6 +50,21 @@ def _save_checkpoint(
     torch.save(checkpoint, run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt")
 
 
+def make_evaluation_samplers(
+    train_noise_sampler,
+    seed: int,
+    epoch: int,
+    device: torch.device,
+):
+    train_eval_sampler = train_noise_sampler.fork(seed + 10_000 + epoch)
+    gaussian_eval_sampler = GaussianNoiseSampler(
+        image_shape=train_noise_sampler.image_shape,
+        device=device,
+        seed=seed + 20_000 + epoch,
+    )
+    return train_eval_sampler, gaussian_eval_sampler
+
+
 def evaluate_checkpoint(
     model: torch.nn.Module,
     diffusion: GaussianDiffusion,
@@ -61,14 +77,11 @@ def evaluate_checkpoint(
     epoch: int,
     step: int,
     timer: Timer,
-) -> None:
+) -> dict[str, Any]:
     eval_cfg = config["evaluation"]
     seed = int(config["seed"])
-    train_eval_sampler = train_noise_sampler.fork(seed + 10_000 + epoch)
-    gaussian_eval_sampler = GaussianNoiseSampler(
-        image_shape=train_noise_sampler.image_shape,
-        device=device,
-        seed=seed + 20_000 + epoch,
+    train_eval_sampler, gaussian_eval_sampler = make_evaluation_samplers(
+        train_noise_sampler, seed, epoch, device
     )
 
     train_den_loss = denoising_loss(
@@ -120,6 +133,7 @@ def evaluate_checkpoint(
         **metrics,
     }
     logger.log(record)
+    return record
 
 
 def train(config: dict[str, Any]) -> Path:
@@ -134,6 +148,8 @@ def train(config: dict[str, Any]) -> Path:
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
     train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
+    metadata = build_run_metadata(config, run_dir, device, train_noise_sampler.info)
+    write_json(run_dir / "run_metadata.json", metadata)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(config["training"]["lr"]),
@@ -151,6 +167,8 @@ def train(config: dict[str, Any]) -> Path:
             "noise_mode": train_noise_sampler.info.mode,
             "pool_size": train_noise_sampler.info.pool_size,
             "pool_memory_mb": round(train_noise_sampler.info.pool_memory_mb, 3),
+            "config_hash": metadata["config_hash"],
+            "git_commit": metadata["git"]["commit"],
             "seconds": 0.0,
             "loss": None,
             "lr": float(config["training"]["lr"]),
@@ -164,6 +182,8 @@ def train(config: dict[str, Any]) -> Path:
     )
 
     global_step = 0
+    epoch = 0
+    last_eval_record = None
     max_train_steps = config["training"].get("max_train_steps")
     grad_accum_steps = int(config["training"].get("grad_accum_steps", 1))
     log_interval = int(config["training"].get("log_interval_steps", 100))
@@ -221,7 +241,7 @@ def train(config: dict[str, Any]) -> Path:
                 break
 
         if _should_checkpoint(epoch, config["training"]):
-            evaluate_checkpoint(
+            last_eval_record = evaluate_checkpoint(
                 model,
                 diffusion,
                 loaders,
@@ -240,17 +260,29 @@ def train(config: dict[str, Any]) -> Path:
         if max_train_steps is not None and global_step >= int(max_train_steps):
             break
 
+    elapsed = round(timer.elapsed(), 3)
     logger.log(
         {
             "type": "run_end",
             "epoch": epoch,
             "step": global_step,
-            "seconds": round(timer.elapsed(), 3),
+            "seconds": elapsed,
             "noise_mode": train_noise_sampler.info.mode,
             "pool_size": train_noise_sampler.info.pool_size,
             "pool_memory_mb": round(train_noise_sampler.info.pool_memory_mb, 3),
         }
     )
+    summary = build_run_summary(
+        config=config,
+        run_dir=run_dir,
+        metadata=metadata,
+        final_epoch=epoch,
+        final_step=global_step,
+        seconds=elapsed,
+        noise_info=train_noise_sampler.info,
+        last_eval=last_eval_record,
+    )
+    write_json(run_dir / "run_summary.json", summary)
     return run_dir
 
 
