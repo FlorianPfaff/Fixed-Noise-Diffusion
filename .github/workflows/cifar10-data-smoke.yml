@@ -1,0 +1,132 @@
+---
+name: CIFAR-10 Data Smoke
+
+on: # yamllint disable-line rule:truthy
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/fixed_noise_diffusion/**"
+      - "pyproject.toml"
+      - ".github/workflows/cifar10-data-smoke.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/fixed_noise_diffusion/**"
+      - "pyproject.toml"
+      - ".github/workflows/cifar10-data-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  cifar10-data-smoke:
+    name: CIFAR-10 cached few-step smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Restore CIFAR-10 cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/cifar10
+          key: cifar10-python-${{ runner.os }}-v1
+          restore-keys: |
+            cifar10-python-${{ runner.os }}-
+
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e .
+
+      - name: Run cached CIFAR-10 few-step training
+        run: |
+          python -m fixed_noise_diffusion.train \
+            --config cifar10_gaussian.yaml \
+            --set device=cpu \
+            --set output_dir=ci_runs \
+            --set run_name=cifar10_data_smoke \
+            --set data.data_dir=.cache/cifar10 \
+            --set data.download=true \
+            --set data.subset_size=16 \
+            --set data.eval_subset_size=16 \
+            --set data.batch_size=4 \
+            --set data.eval_batch_size=4 \
+            --set data.num_workers=0 \
+            --set model.base_channels=8 \
+            --set "model.channel_mults=[1,2]" \
+            --set model.time_emb_dim=32 \
+            --set model.dropout=0.0 \
+            --set diffusion.num_timesteps=16 \
+            --set training.epochs=1 \
+            --set training.max_train_steps=2 \
+            --set training.amp=false \
+            --set training.log_interval_steps=1 \
+            --set "training.checkpoint_epochs=[1]" \
+            --set training.save_checkpoint=false \
+            --set evaluation.denoising_batches=1 \
+            --set evaluation.sample_count=1 \
+            --set evaluation.sample_steps=2 \
+            --set evaluation.enable_metrics=false
+
+      - name: Validate real-data smoke outputs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data_dir = Path(".cache/cifar10/cifar-10-batches-py")
+          run_dir = Path("ci_runs/cifar10_data_smoke")
+          metrics_path = run_dir / "metrics.jsonl"
+          summary_path = run_dir / "run_summary.json"
+          metadata_path = run_dir / "run_metadata.json"
+
+          assert data_dir.exists(), "missing cached CIFAR-10 extraction"
+          assert metrics_path.exists(), "missing metrics.jsonl"
+          assert summary_path.exists(), "missing run_summary.json"
+          assert metadata_path.exists(), "missing run_metadata.json"
+
+          rows = [
+              json.loads(line)
+              for line in metrics_path.read_text(encoding="utf-8").splitlines()
+          ]
+          train_rows = [row for row in rows if row["type"] == "train_step"]
+          eval_rows = [row for row in rows if row["type"] == "eval"]
+          metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+          summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+          assert len(train_rows) == 2, "expected exactly two train steps"
+          assert eval_rows, "missing eval row"
+          assert metadata["data"]["dataset"] == "cifar10"
+          assert metadata["noise"]["mode"] == "gaussian"
+          assert summary["final_step"] == 2
+          assert summary["status"] == "completed"
+          assert (run_dir / "samples" / "epoch_0001.png").exists()
+          print(summary["last_eval"])
+          PY
+
+      - name: Upload CIFAR-10 smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifar10-data-smoke
+          path: |
+            ci_runs/cifar10_data_smoke/metrics.*
+            ci_runs/cifar10_data_smoke/run_*.json
+            ci_runs/cifar10_data_smoke/samples/*.png
