@@ -8,8 +8,6 @@ on: # yamllint disable-line rule:truthy
     paths:
       - "src/fixed_noise_diffusion/**"
       - "tests/**"
-      - "configs/**"
-      - "scripts/**"
       - "pyproject.toml"
       - "README.md"
       - ".github/workflows/fixed-noise-diffusion-ci.yml"
@@ -19,8 +17,6 @@ on: # yamllint disable-line rule:truthy
     paths:
       - "src/fixed_noise_diffusion/**"
       - "tests/**"
-      - "configs/**"
-      - "scripts/**"
       - "pyproject.toml"
       - "README.md"
       - ".github/workflows/fixed-noise-diffusion-ci.yml"
@@ -71,7 +67,7 @@ jobs:
       - name: Run synthetic diffusion smoke test
         run: |
           python -m fixed_noise_diffusion.train \
-            --config configs/smoke.yaml \
+            --config smoke.yaml \
             --set device=cpu \
             --set output_dir=ci_runs \
             --set run_name=smoke_py${{ matrix.python-version }} \
@@ -144,6 +140,12 @@ jobs:
         run: |
           python -m fixed_noise_diffusion.train --help > /dev/null
           python -m fixed_noise_diffusion.plot_results --help > /dev/null
+          python - <<'PY'
+          from fixed_noise_diffusion.config import load_config
+
+          config = load_config("smoke.yaml")
+          assert config["run_name"] == "smoke"
+          PY
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
