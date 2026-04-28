@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-
 from fixed_noise_diffusion.config import load_config
 from fixed_noise_diffusion.train import train
 
@@ -51,6 +50,7 @@ def _checkpoint_model(run_dir: Path) -> dict[str, torch.Tensor]:
     checkpoint = torch.load(
         run_dir / "checkpoints" / "epoch_0001.pt",
         map_location="cpu",
+        weights_only=True,
     )
     return checkpoint["model"]
 
