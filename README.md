@@ -62,6 +62,30 @@ $env:PYTHONPATH = "src"
 py -3.12 -m fixed_noise_diffusion.plot_results --runs runs/cifar10_*
 ```
 
+Evaluate saved checkpoints with Inception FID/KID:
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
+  --sweep-dir runs/wp2_50ep_3seed `
+  --output-dir runs/wp2_fid2048_10k `
+  --epochs 50 `
+  --sample-count 10000 `
+  --fid-feature 2048
+```
+
+Combine one or more `sample_quality.csv` outputs and optionally join denoising
+gap summaries:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.summarize_sample_quality `
+  --quality runs/wp2_fid2048_10k_gpu0 `
+  --quality runs/wp2_fid2048_10k_gpu1 `
+  --gap-summary runs/wp2_50ep_gap_summary.csv `
+  --output-dir runs `
+  --prefix wp2_fid2048_10k_epoch50
+```
+
 ## Key Diagnostic
 
 The main WP2 diagnostic is:
