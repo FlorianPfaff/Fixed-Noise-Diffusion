@@ -151,6 +151,7 @@ jobs:
           python -m fixed_noise_diffusion.plot_results --help > /dev/null
           python -m fixed_noise_diffusion.evaluate_sample_quality --help > /dev/null
           python -m fixed_noise_diffusion.summarize_sample_quality --help > /dev/null
+          python -m fixed_noise_diffusion.evaluate_timestep_diagnostics --help > /dev/null
           python - <<'PY'
           from fixed_noise_diffusion.config import load_config
 

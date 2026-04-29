@@ -99,6 +99,17 @@ py -3.12 -m fixed_noise_diffusion.summarize_sample_quality `
   --prefix wp2_fid2048_10k_epoch50
 ```
 
+Evaluate timestep-local denoising gaps from saved checkpoints:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.evaluate_timestep_diagnostics `
+  --sweep-dir runs/wp2_100ep_reduced `
+  --output-dir runs/wp2_timestep_diagnostics `
+  --epochs 50,100 `
+  --timesteps 0,25,50,100,200,400,600,800,999 `
+  --batches 16
+```
+
 ## Key Diagnostic
 
 The main WP2 diagnostic is:
