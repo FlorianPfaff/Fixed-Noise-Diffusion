@@ -111,7 +111,8 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
 def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     grouped: dict[tuple[str, str, str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["kind"], row["condition"], row["pool_size"], row["epoch"])].append(row)
+        key = (row["kind"], row["condition"], row["pool_size"], row["epoch"])
+        grouped[key].append(row)
 
     summary: list[dict[str, str]] = []
     for (kind, condition, pool_size, epoch), group in grouped.items():
@@ -153,7 +154,9 @@ def read_gap_rows(paths: list[Path]) -> dict[str, dict[str, str]]:
                 prior_epoch = int(latest.get(condition, {}).get("epoch") or -1)
                 if current_epoch < prior_epoch:
                     continue
-                gap_mean = row.get("denoising_gap_mean", row.get("mean_denoising_gap", ""))
+                gap_mean = row.get(
+                    "denoising_gap_mean", row.get("mean_denoising_gap", "")
+                )
                 gap_std = row.get("denoising_gap_std", row.get("std_denoising_gap", ""))
                 latest[condition] = {
                     "epoch": str(current_epoch),
@@ -283,7 +286,9 @@ def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
             label = (
                 "G"
                 if label == "gaussian"
-                else label.replace("fixed_pool_whitened_", "w").replace("fixed_pool_", "")
+                else label.replace("fixed_pool_whitened_", "w").replace(
+                    "fixed_pool_", ""
+                )
             )
             axis.annotate(
                 label,
@@ -311,7 +316,10 @@ def main() -> None:
         action="append",
         type=Path,
         required=True,
-        help="A sample_quality.csv file or a directory containing one or more such files.",
+        help=(
+            "A sample_quality.csv file or a directory containing one or more such "
+            "files."
+        ),
     )
     parser.add_argument(
         "--gap-summary",
