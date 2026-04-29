@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -32,13 +33,13 @@ def denoising_loss_from_timesteps(
         if batch_index >= int(batches):
             break
         images = images.to(device, non_blocking=True)
-        batch_size = images.shape[0]
+        batch_size = int(images.shape[0])
         timesteps = make_timesteps(batch_size)
         noise = sampler.sample(batch_size)
         noisy = diffusion.q_sample(images, timesteps, noise)
         pred_noise = model(noisy, timesteps)
         loss = F.mse_loss(pred_noise, noise, reduction="mean")
-        total_loss += loss.item() * batch_size
+        total_loss += float(loss.item()) * batch_size
         total_count += batch_size
     if total_count == 0:
         raise ValueError("Validation loader produced no batches")

@@ -111,8 +111,9 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
 def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     grouped: dict[tuple[str, str, str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        key = (row["kind"], row["condition"], row["pool_size"], row["epoch"])
-        grouped[key].append(row)
+        grouped[(row["kind"], row["condition"], row["pool_size"], row["epoch"])].append(
+            row
+        )
 
     summary: list[dict[str, str]] = []
     for (kind, condition, pool_size, epoch), group in grouped.items():
@@ -317,8 +318,8 @@ def main() -> None:
         type=Path,
         required=True,
         help=(
-            "A sample_quality.csv file or a directory containing one or more such "
-            "files."
+            "A sample_quality.csv file or a directory containing one or more "
+            "such files."
         ),
     )
     parser.add_argument(

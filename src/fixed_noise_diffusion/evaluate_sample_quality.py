@@ -19,7 +19,6 @@ from .diffusion import GaussianDiffusion
 from .evaluate import _to_uint8
 from .utils import generator_for, resolve_device, seed_everything
 
-
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 
 
