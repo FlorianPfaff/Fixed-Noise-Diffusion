@@ -74,6 +74,19 @@ py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
   --fid-feature 2048
 ```
 
+For a larger CIFAR-10 FID run, use the training split for real statistics:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
+  --sweep-dir runs/wp2_100ep_reduced `
+  --output-dir runs/wp2_fid2048_50k `
+  --epochs 100 `
+  --sample-count 50000 `
+  --real-count 50000 `
+  --real-split train `
+  --fid-feature 2048
+```
+
 Combine one or more `sample_quality.csv` outputs and optionally join denoising
 gap summaries:
 

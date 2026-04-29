@@ -11,6 +11,7 @@ from typing import Any
 import torch
 import yaml
 from torch import nn
+from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
 from .data import make_dataloaders
@@ -53,18 +54,25 @@ def _load_model(
 def _prepare_config(
     config: dict[str, Any],
     sample_count: int,
+    real_count: int,
     sample_batch_size: int,
     sample_steps: int,
     sampler: str,
+    real_split: str,
 ) -> dict[str, Any]:
     data_cfg = config["data"]
     eval_cfg = config["evaluation"]
     data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(sample_batch_size)
-    if data_cfg.get("eval_subset_size") is None:
-        data_cfg["eval_subset_size"] = int(sample_count)
-    else:
-        data_cfg["eval_subset_size"] = max(int(data_cfg["eval_subset_size"]), sample_count)
+    if real_split == "val":
+        if data_cfg.get("eval_subset_size") is None:
+            data_cfg["eval_subset_size"] = int(real_count)
+        else:
+            data_cfg["eval_subset_size"] = max(
+                int(data_cfg["eval_subset_size"]), real_count
+            )
+    elif data_cfg.get("subset_size") is not None:
+        data_cfg["subset_size"] = max(int(data_cfg["subset_size"]), real_count)
     eval_cfg["sample_count"] = int(sample_count)
     eval_cfg["sample_steps"] = int(sample_steps)
     eval_cfg["sampler"] = sampler
@@ -78,10 +86,21 @@ def _update_real_metrics(
     config: dict[str, Any],
     device: torch.device,
     count: int,
+    split: str,
 ) -> int:
     loaders = make_dataloaders(config)
+    data_cfg = config["data"]
+    dataset = loaders.train.dataset if split == "train" else loaders.val.dataset
+    loader = DataLoader(
+        dataset,
+        batch_size=int(data_cfg["eval_batch_size"]),
+        shuffle=False,
+        num_workers=int(data_cfg["num_workers"]),
+        pin_memory=True,
+        drop_last=False,
+    )
     seen = 0
-    for images, _ in loaders.val:
+    for images, _ in loader:
         if seen >= count:
             break
         remaining = count - seen
@@ -164,9 +183,11 @@ def evaluate_run_epoch(
     config = _prepare_config(
         config,
         sample_count=args.sample_count,
+        real_count=args.real_count or args.sample_count,
         sample_batch_size=args.sample_batch_size,
         sample_steps=args.sample_steps,
         sampler=args.sampler,
+        real_split=args.real_split,
     )
 
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
@@ -175,7 +196,15 @@ def evaluate_run_epoch(
         subset_size=min(args.kid_subset_size, args.sample_count),
         normalize=False,
     ).to(device)
-    real_count = _update_real_metrics(fid, kid, config, device, args.sample_count)
+    requested_real_count = int(args.real_count or args.sample_count)
+    real_count = _update_real_metrics(
+        fid,
+        kid,
+        config,
+        device,
+        requested_real_count,
+        args.real_split,
+    )
     grid_path = output_dir / run_dir.name / f"epoch_{epoch:04d}_samples.png"
     fake_count = _generate_fake_metrics(
         model=model,
@@ -201,6 +230,8 @@ def evaluate_run_epoch(
         "epoch": epoch,
         "step": step,
         "sample_count": args.sample_count,
+        "requested_real_count": requested_real_count,
+        "real_split": args.real_split,
         "real_count": real_count,
         "fake_count": fake_count,
         "sample_steps": args.sample_steps,
@@ -246,6 +277,18 @@ def main() -> None:
     parser.add_argument("--run", action="append", default=[], help="Run directory name")
     parser.add_argument("--epochs", default="1,5,10,25,50")
     parser.add_argument("--sample-count", type=int, default=2048)
+    parser.add_argument(
+        "--real-count",
+        type=int,
+        default=None,
+        help="Number of real images for FID/KID. Defaults to --sample-count.",
+    )
+    parser.add_argument(
+        "--real-split",
+        choices=["val", "train"],
+        default="val",
+        help="CIFAR split to use for real FID/KID statistics.",
+    )
     parser.add_argument("--sample-batch-size", type=int, default=256)
     parser.add_argument("--sample-steps", type=int, default=50)
     parser.add_argument("--sampler", choices=["ddim", "ddpm"], default="ddim")
