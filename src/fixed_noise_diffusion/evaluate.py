@@ -1,18 +1,70 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import torch
 import torch.nn.functional as F
+import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 
 from .diffusion import GaussianDiffusion
+from .model import build_model
 from .noise import FixedPoolNoiseSampler, GaussianNoiseSampler
 from .utils import generator_for
 
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
+
+
+def load_checkpoint_model(
+    run_dir: Path, epoch: int, device: torch.device
+) -> tuple[nn.Module, GaussianDiffusion, dict[str, Any], int]:
+    checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    if checkpoint.get("config") is None:
+        with (run_dir / "config.yaml").open("r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+    else:
+        config = checkpoint["config"]
+    model = build_model(config).to(device)
+    model.load_state_dict(checkpoint["model"])
+    model.eval()
+    diffusion = GaussianDiffusion.from_config(config, device)
+    return model, diffusion, config, int(checkpoint.get("step", 0))
+
+
+@torch.no_grad()
+def _average_denoising_loss(
+    model: nn.Module,
+    diffusion: GaussianDiffusion,
+    loader: DataLoader,
+    sampler: NoiseSampler,
+    device: torch.device,
+    batches: int,
+    make_timesteps: Callable[[int], torch.Tensor],
+) -> tuple[float, int]:
+    model.eval()
+    total_loss = 0.0
+    total_count = 0
+    for batch_index, (images, _) in enumerate(loader):
+        if batch_index >= int(batches):
+            break
+        images = images.to(device, non_blocking=True)
+        batch_size = int(images.shape[0])
+        timesteps = make_timesteps(batch_size)
+        noise = sampler.sample(batch_size)
+        noisy = diffusion.q_sample(images, timesteps, noise)
+        pred_noise = model(noisy, timesteps)
+        loss = F.mse_loss(pred_noise, noise, reduction="mean")
+        total_loss += float(loss.item()) * batch_size
+        total_count += batch_size
+    if total_count == 0:
+        raise ValueError("Validation loader produced no batches")
+    return total_loss / total_count, total_count
 
 
 @torch.no_grad()
@@ -25,16 +77,10 @@ def denoising_loss(
     batches: int,
     seed: int,
 ) -> float:
-    model.eval()
     timestep_generator = generator_for(device, seed)
-    total_loss = 0.0
-    total_count = 0
-    for batch_index, (images, _) in enumerate(loader):
-        if batch_index >= int(batches):
-            break
-        images = images.to(device, non_blocking=True)
-        batch_size = images.shape[0]
-        timesteps = torch.randint(
+
+    def make_random_timesteps(batch_size: int) -> torch.Tensor:
+        return torch.randint(
             0,
             diffusion.num_timesteps,
             (batch_size,),
@@ -42,15 +88,17 @@ def denoising_loss(
             generator=timestep_generator,
             dtype=torch.long,
         )
-        noise = sampler.sample(batch_size)
-        noisy = diffusion.q_sample(images, timesteps, noise)
-        pred_noise = model(noisy, timesteps)
-        loss = F.mse_loss(pred_noise, noise, reduction="mean")
-        total_loss += loss.item() * batch_size
-        total_count += batch_size
-    if total_count == 0:
-        raise ValueError("Validation loader produced no batches")
-    return total_loss / total_count
+
+    loss, _ = _average_denoising_loss(
+        model=model,
+        diffusion=diffusion,
+        loader=loader,
+        sampler=sampler,
+        device=device,
+        batches=batches,
+        make_timesteps=make_random_timesteps,
+    )
+    return loss
 
 
 def _to_uint8(images: torch.Tensor) -> torch.Tensor:

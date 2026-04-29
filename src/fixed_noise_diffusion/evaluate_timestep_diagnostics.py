@@ -14,13 +14,11 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import torch
-import torch.nn.functional as F
-import yaml
 from torch import nn
 
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
-from .model import build_model
+from .evaluate import _average_denoising_loss, load_checkpoint_model
 from .noise import GaussianNoiseSampler, make_noise_sampler
 from .summarize_sample_quality import condition_kind, condition_pool_size
 from .utils import resolve_device, seed_everything
@@ -33,26 +31,6 @@ def parse_int_list(raw: str) -> list[int]:
     if not values:
         raise ValueError("At least one integer value is required")
     return values
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
-
-
-def _load_model(
-    run_dir: Path, epoch: int, device: torch.device
-) -> tuple[nn.Module, GaussianDiffusion, dict[str, Any], int]:
-    checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    config = checkpoint.get("config") or _load_yaml(run_dir / "config.yaml")
-    model = build_model(config).to(device)
-    model.load_state_dict(checkpoint["model"])
-    model.eval()
-    diffusion = GaussianDiffusion.from_config(config, device)
-    return model, diffusion, config, int(checkpoint.get("step", 0))
 
 
 def _prepare_config(
@@ -86,26 +64,18 @@ def fixed_timestep_denoising_loss(
     timestep: int,
     batches: int,
 ) -> tuple[float, int]:
-    model.eval()
-    total_loss = 0.0
-    total_count = 0
-    for batch_index, (images, _) in enumerate(loader):
-        if batch_index >= int(batches):
-            break
-        images = images.to(device, non_blocking=True)
-        batch_size = images.shape[0]
-        timesteps = torch.full(
-            (batch_size,), int(timestep), device=device, dtype=torch.long
-        )
-        noise = sampler.sample(batch_size)
-        noisy = diffusion.q_sample(images, timesteps, noise)
-        pred_noise = model(noisy, timesteps)
-        loss = F.mse_loss(pred_noise, noise, reduction="mean")
-        total_loss += float(loss.item()) * batch_size
-        total_count += int(batch_size)
-    if total_count == 0:
-        raise ValueError("Validation loader produced no batches")
-    return total_loss / total_count, total_count
+    def make_fixed_timesteps(batch_size: int) -> torch.Tensor:
+        return torch.full((batch_size,), int(timestep), device=device, dtype=torch.long)
+
+    return _average_denoising_loss(
+        model=model,
+        diffusion=diffusion,
+        loader=loader,
+        sampler=sampler,
+        device=device,
+        batches=batches,
+        make_timesteps=make_fixed_timesteps,
+    )
 
 
 def _run_identity(run_dir: Path) -> tuple[str, int]:
@@ -125,7 +95,7 @@ def evaluate_run(
     condition, run_seed = _run_identity(run_dir)
     rows: list[dict[str, Any]] = []
 
-    model, diffusion, config, step = _load_model(run_dir, epochs[0], device)
+    model, diffusion, config, step = load_checkpoint_model(run_dir, epochs[0], device)
     config = _prepare_config(
         config, args.batch_size, args.batches, args.data_dir, args.num_workers
     )
@@ -136,7 +106,9 @@ def evaluate_run(
 
     for epoch_index, epoch in enumerate(epochs):
         if epoch_index > 0:
-            model, diffusion, config, step = _load_model(run_dir, epoch, device)
+            model, diffusion, config, step = load_checkpoint_model(
+                run_dir, epoch, device
+            )
         for timestep in timesteps:
             if timestep < 0 or timestep >= diffusion.num_timesteps:
                 raise ValueError(
@@ -170,7 +142,9 @@ def evaluate_run(
                 batches=args.batches,
             )
             if image_count != gaussian_image_count:
-                raise RuntimeError("Train-law and Gaussian evaluations used unequal data")
+                raise RuntimeError(
+                    "Train-law and Gaussian evaluations used unequal data"
+                )
             info = train_base_sampler.info
             rows.append(
                 {
@@ -196,7 +170,9 @@ def evaluate_run(
     return rows
 
 
-def _append_records(csv_path: Path, jsonl_path: Path, rows: list[dict[str, Any]]) -> None:
+def _append_records(
+    csv_path: Path, jsonl_path: Path, rows: list[dict[str, Any]]
+) -> None:
     if not rows:
         return
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,7 +208,9 @@ def _float_or_nan(value: Any) -> float:
 
 
 def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(
+        list
+    )
     for row in rows:
         grouped[
             (
@@ -259,7 +237,9 @@ def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "n": str(len(group)),
                 "train_noise_loss_mean": _format_float(_sample_mean(train_losses)),
                 "train_noise_loss_std": _format_float(_sample_std(train_losses)),
-                "gaussian_noise_loss_mean": _format_float(_sample_mean(gaussian_losses)),
+                "gaussian_noise_loss_mean": _format_float(
+                    _sample_mean(gaussian_losses)
+                ),
                 "gaussian_noise_loss_std": _format_float(_sample_std(gaussian_losses)),
                 "timestep_gap_mean": _format_float(_sample_mean(gaps)),
                 "timestep_gap_std": _format_float(_sample_std(gaps)),
