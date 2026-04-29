@@ -9,17 +9,14 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
-from .evaluate import _to_uint8
-from .model import build_model
+from .evaluate import _to_uint8, load_checkpoint_model
 from .utils import generator_for, resolve_device, seed_everything
-
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 
@@ -29,26 +26,6 @@ def _parse_epochs(raw: str) -> list[int]:
     if not epochs:
         raise ValueError("At least one epoch is required")
     return epochs
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
-
-
-def _load_model(
-    run_dir: Path, epoch: int, device: torch.device
-) -> tuple[nn.Module, GaussianDiffusion, dict[str, Any], int]:
-    checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    config = checkpoint.get("config") or _load_yaml(run_dir / "config.yaml")
-    model = build_model(config).to(device)
-    model.load_state_dict(checkpoint["model"])
-    model.eval()
-    diffusion = GaussianDiffusion.from_config(config, device)
-    return model, diffusion, config, int(checkpoint.get("step", 0))
 
 
 def _prepare_config(
@@ -179,7 +156,7 @@ def evaluate_run_epoch(
     seed_everything(args.seed + seed * 1000 + epoch)
 
     start = time.perf_counter()
-    model, diffusion, config, step = _load_model(run_dir, epoch, device)
+    model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
     config = _prepare_config(
         config,
         sample_count=args.sample_count,
