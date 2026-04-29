@@ -42,7 +42,7 @@ def _load_model(
     checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
     if not checkpoint_path.is_file():
         raise FileNotFoundError(checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     config = checkpoint.get("config") or _load_yaml(run_dir / "config.yaml")
     model = build_model(config).to(device)
     model.load_state_dict(checkpoint["model"])
