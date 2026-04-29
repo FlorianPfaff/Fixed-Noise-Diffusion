@@ -16,21 +16,15 @@ import matplotlib.pyplot as plt
 import torch
 from torch import nn
 
+from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
-from .evaluate import _average_denoising_loss, load_checkpoint_model
+from .evaluate import denoising_loss_from_timesteps
 from .noise import GaussianNoiseSampler, make_noise_sampler
 from .summarize_sample_quality import condition_kind, condition_pool_size
 from .utils import resolve_device, seed_everything
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
-
-
-def parse_int_list(raw: str) -> list[int]:
-    values = [int(part.strip()) for part in raw.split(",") if part.strip()]
-    if not values:
-        raise ValueError("At least one integer value is required")
-    return values
 
 
 def _prepare_config(
@@ -67,7 +61,7 @@ def fixed_timestep_denoising_loss(
     def make_fixed_timesteps(batch_size: int) -> torch.Tensor:
         return torch.full((batch_size,), int(timestep), device=device, dtype=torch.long)
 
-    return _average_denoising_loss(
+    return denoising_loss_from_timesteps(
         model=model,
         diffusion=diffusion,
         loader=loader,
@@ -208,9 +202,8 @@ def _float_or_nan(value: Any) -> float:
 
 
 def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(
-        list
-    )
+    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]]
+    grouped = defaultdict(list)
     for row in rows:
         grouped[
             (
