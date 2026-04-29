@@ -20,6 +20,7 @@ def _write_csv(path, rows):
 def test_condition_parsing():
     assert condition_kind("gaussian") == "gaussian"
     assert condition_pool_size("gaussian") is None
+    assert condition_kind("strong96_gaussian") == "gaussian"
     assert condition_kind("fixed_pool_10k") == "fixed_pool"
     assert condition_pool_size("fixed_pool_10k") == 10_000
     assert condition_kind("fixed_pool_whitened_100k") == "whitened"

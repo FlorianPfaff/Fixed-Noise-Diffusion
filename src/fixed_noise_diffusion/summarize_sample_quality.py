@@ -15,7 +15,7 @@ POOL_RE = re.compile(r"(?:fixed_pool|fixed_pool_whitened)_(?P<size>\d+)(?P<unit>
 
 
 def condition_kind(condition: str) -> str:
-    if condition == "gaussian":
+    if condition == "gaussian" or condition.endswith("_gaussian"):
         return "gaussian"
     if "whitened" in condition:
         return "whitened"
