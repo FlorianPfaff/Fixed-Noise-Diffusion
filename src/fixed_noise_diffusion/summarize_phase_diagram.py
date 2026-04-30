@@ -7,6 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from .plotting import save_figure
 from .summarize_sample_quality import (
     _float_or_nan,
     _format_float,
@@ -163,9 +164,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
                     color=color,
                 )
             gaussian = [
-                _metric_value(row, metric)
-                for row in group
-                if _pool_value(row) is None
+                _metric_value(row, metric) for row in group if _pool_value(row) is None
             ]
             if gaussian:
                 axis.axhline(
@@ -182,9 +181,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
         axis.grid(True, alpha=0.25)
     axes[0].set_ylabel("Metric value")
     axes[0].legend(frameon=False, fontsize=8)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=180)
-    plt.close(fig)
+    save_figure(fig, output)
 
 
 def main() -> None:
