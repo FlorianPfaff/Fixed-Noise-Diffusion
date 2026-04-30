@@ -163,9 +163,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
                     color=color,
                 )
             gaussian = [
-                _metric_value(row, metric)
-                for row in group
-                if _pool_value(row) is None
+                _metric_value(row, metric) for row in group if _pool_value(row) is None
             ]
             if gaussian:
                 axis.axhline(
