@@ -4,7 +4,6 @@ import argparse
 import csv
 import json
 import math
-import re
 import time
 from collections import defaultdict
 from copy import deepcopy
@@ -21,10 +20,10 @@ from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import denoising_loss_from_timesteps
 from .noise import GaussianNoiseSampler, make_noise_sampler
+from .plotting import save_figure
 from .summarize_sample_quality import condition_kind, condition_pool_size
+from .sweep import add_common_sweep_eval_args, run_identity, select_run_dirs
 from .utils import resolve_device, seed_everything
-
-RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 
 
 def _prepare_config(
@@ -72,13 +71,6 @@ def fixed_timestep_denoising_loss(
     )
 
 
-def _run_identity(run_dir: Path) -> tuple[str, int]:
-    match = RUN_RE.match(run_dir.name)
-    if match is None:
-        return run_dir.name, -1
-    return match.group("condition"), int(match.group("seed"))
-
-
 def evaluate_run(
     run_dir: Path,
     epochs: list[int],
@@ -86,7 +78,7 @@ def evaluate_run(
     args: argparse.Namespace,
 ) -> list[dict[str, Any]]:
     device = resolve_device(args.device)
-    condition, run_seed = _run_identity(run_dir)
+    condition, run_seed = run_identity(run_dir)
     rows: list[dict[str, Any]] = []
 
     model, diffusion, config, step = load_checkpoint_model(run_dir, epochs[0], device)
@@ -292,52 +284,15 @@ def plot_timestep_gaps(summary: list[dict[str, str]], output: Path) -> None:
     axis.set_title(f"Timestep-local denoising gap at epoch {final_epoch}")
     axis.grid(True, alpha=0.25)
     axis.legend(frameon=False, fontsize=8)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=180)
-    plt.close(fig)
-
-
-def _select_runs(sweep_dirs: list[Path], run_names: list[str]) -> list[Path]:
-    runs: list[Path] = []
-    for sweep_dir in sweep_dirs:
-        sweep_dir = sweep_dir.expanduser().resolve()
-        if run_names:
-            runs.extend(sweep_dir / name for name in run_names)
-        else:
-            runs.extend(sorted(path for path in sweep_dir.iterdir() if path.is_dir()))
-    seen: set[Path] = set()
-    unique: list[Path] = []
-    for run in runs:
-        if run not in seen:
-            seen.add(run)
-            unique.append(run)
-    missing = [str(path) for path in unique if not path.is_dir()]
-    if missing:
-        raise FileNotFoundError(f"Missing run directories: {missing}")
-    return unique
+    save_figure(fig, output)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate timestep-local fixed-noise denoising diagnostics."
     )
-    parser.add_argument(
-        "--sweep-dir",
-        action="append",
-        type=Path,
-        required=True,
-        help="Directory containing saved run folders. May be passed more than once.",
-    )
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--run", action="append", default=[], help="Run directory name")
-    parser.add_argument("--epochs", default="50,100")
+    add_common_sweep_eval_args(parser, default_epochs="50,100")
     parser.add_argument("--timesteps", default="0,25,50,100,200,400,600,800,999")
-    parser.add_argument("--batches", type=int, default=16)
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--data-dir", default=None)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
     output_dir = args.output_dir.expanduser()
@@ -347,7 +302,7 @@ def main() -> None:
     timesteps = parse_int_list(args.timesteps)
     all_rows: list[dict[str, Any]] = []
 
-    for run_dir in _select_runs(args.sweep_dir, args.run):
+    for run_dir in select_run_dirs(args.sweep_dir, args.run):
         rows = evaluate_run(run_dir, epochs, timesteps, args)
         _append_records(csv_path, jsonl_path, rows)
         all_rows.extend(rows)
