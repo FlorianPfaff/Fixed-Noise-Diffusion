@@ -19,6 +19,10 @@ on:
         description: "Persistent dataset cache on the self-hosted runner"
         required: true
         default: "/home/florianpfaff/datasets/fixed-noise-diffusion"
+      python_bin:
+        description: "Python executable on the self-hosted runner; leave empty to auto-detect"
+        required: false
+        default: "/home/florianpfaff/fixed-noise-diffusion-work/Fixed-Noise-Diffusion/.venv/bin/python"
       cuda_visible_devices:
         description: "Optional CUDA_VISIBLE_DEVICES value; leave empty to use the runner default"
         required: false
@@ -53,22 +57,43 @@ jobs:
       PYTHONNOUSERSITE: "1"
       OUTPUT_ROOT: runs/${{ inputs.run_group }}
       DATA_DIR: ${{ inputs.data_dir }}
+      FND_PYTHON_BIN: ${{ inputs.python_bin }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Select Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${FND_PYTHON_BIN}" ]; then
+            PYTHON_BIN="${FND_PYTHON_BIN}"
+          elif [ -x ".venv/bin/python" ]; then
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          elif command -v python3.12 >/dev/null 2>&1; then
+            python3.12 -m venv .venv
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          elif command -v python3 >/dev/null 2>&1; then
+            python3 -m venv .venv
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          else
+            echo "No usable Python executable found" >&2
+            exit 2
+          fi
+          if [ ! -x "${PYTHON_BIN}" ]; then
+            echo "Configured Python executable is not executable: ${PYTHON_BIN}" >&2
+            exit 2
+          fi
+          "${PYTHON_BIN}" --version
+          echo "FND_PYTHON=${PYTHON_BIN}" >> "${GITHUB_ENV}"
 
       - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          if ! python - <<'PY'
+          "${FND_PYTHON}" -m pip install --upgrade pip
+          if ! "${FND_PYTHON}" - <<'PY'
           import torch
           import torchvision
           if not torch.cuda.is_available():
@@ -76,11 +101,23 @@ jobs:
           print(f"torch={torch.__version__}; cuda={torch.version.cuda}; device={torch.cuda.get_device_name(0)}")
           PY
           then
-            python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+            "${FND_PYTHON}" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
           fi
-          python -m pip install -e .
-          if [ "${{ inputs.run_fid }}" = "true" ]; then
-            python -m pip install -e '.[metrics]'
+          if "${FND_PYTHON}" - <<'PY'
+          import sys
+          raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+          PY
+          then
+            "${FND_PYTHON}" -m pip install -e .
+            if [ "${{ inputs.run_fid }}" = "true" ]; then
+              "${FND_PYTHON}" -m pip install -e '.[metrics]'
+            fi
+          else
+            echo "::warning::Using Python below the package metadata floor; relying on PYTHONPATH=src for self-hosted runner execution."
+            "${FND_PYTHON}" -m pip install matplotlib numpy pillow pyyaml tqdm
+            if [ "${{ inputs.run_fid }}" = "true" ]; then
+              "${FND_PYTHON}" -m pip install 'torchmetrics[image]>=1.4' 'torch-fidelity>=0.3'
+            fi
           fi
 
       - name: Prepare STL-10 dataset cache
@@ -90,7 +127,7 @@ jobs:
           mkdir -p "${DATA_DIR}"
           (
             flock 9
-            python - <<'PY'
+            "${FND_PYTHON}" - <<'PY'
           import os
           from torchvision import datasets
 
@@ -138,7 +175,7 @@ jobs:
               ;;
           esac
 
-          python -m fixed_noise_diffusion.train \
+          "${FND_PYTHON}" -m fixed_noise_diffusion.train \
             --config stl10_base.yaml \
             --set "run_name=${RUN_NAME}" \
             --set "output_dir=${OUTPUT_ROOT}" \
@@ -162,7 +199,7 @@ jobs:
           done
 
           if [ "${{ inputs.run_fid }}" = "true" ]; then
-            python -m fixed_noise_diffusion.evaluate_sample_quality \
+            "${FND_PYTHON}" -m fixed_noise_diffusion.evaluate_sample_quality \
               --sweep-dir "${OUTPUT_ROOT}" \
               --output-dir "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}" \
               --run "${RUN_NAME}" \
