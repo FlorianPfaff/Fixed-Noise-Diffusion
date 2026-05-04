@@ -44,6 +44,46 @@ def _subset(dataset: Dataset, size: int | None, seed: int) -> Dataset:
     return Subset(dataset, indices)
 
 
+def _make_torchvision_cifar_loaders(
+    dataset_name: str,
+    data_cfg: dict[str, Any],
+    seed: int,
+) -> tuple[Dataset, Dataset]:
+    from torchvision import datasets, transforms
+
+    dataset_map = {
+        "cifar10": datasets.CIFAR10,
+        "cifar100": datasets.CIFAR100,
+    }
+    try:
+        dataset_cls = dataset_map[dataset_name]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported CIFAR dataset {dataset_name!r}") from exc
+
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ]
+    )
+    root = Path(data_cfg["data_dir"])
+    train_dataset = dataset_cls(
+        root=root,
+        train=True,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    val_dataset = dataset_cls(
+        root=root,
+        train=False,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
+    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
+    return train_dataset, val_dataset
+
+
 def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
     data_cfg = config["data"]
     seed = int(config["seed"])
@@ -62,30 +102,12 @@ def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
             data_cfg["image_size"],
             seed + 100_000,
         )
-    elif dataset_name == "cifar10":
-        from torchvision import datasets, transforms
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-            ]
+    elif dataset_name in {"cifar10", "cifar100"}:
+        train_dataset, val_dataset = _make_torchvision_cifar_loaders(
+            dataset_name,
+            data_cfg,
+            seed,
         )
-        root = Path(data_cfg["data_dir"])
-        train_dataset = datasets.CIFAR10(
-            root=root,
-            train=True,
-            download=bool(data_cfg["download"]),
-            transform=transform,
-        )
-        val_dataset = datasets.CIFAR10(
-            root=root,
-            train=False,
-            download=bool(data_cfg["download"]),
-            transform=transform,
-        )
-        train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
-        val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
     else:
         raise ValueError(f"Unsupported dataset {dataset_name!r}")
 
