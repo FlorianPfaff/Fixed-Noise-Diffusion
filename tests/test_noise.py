@@ -1,5 +1,4 @@
 import torch
-
 from fixed_noise_diffusion.noise import FixedPoolNoiseSampler, GaussianNoiseSampler
 from fixed_noise_diffusion.train import (
     make_evaluation_samplers,

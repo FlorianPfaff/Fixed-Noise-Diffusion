@@ -205,7 +205,9 @@ def train(config: dict[str, Any]) -> Path:
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
     train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
-    heldout_noise_sampler = make_heldout_pool_sampler(config, train_noise_sampler, device)
+    heldout_noise_sampler = make_heldout_pool_sampler(
+        config, train_noise_sampler, device
+    )
     metadata = build_run_metadata(config, run_dir, device, train_noise_sampler.info)
     write_json(run_dir / "run_metadata.json", metadata)
     optimizer = torch.optim.AdamW(
