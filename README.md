@@ -99,6 +99,11 @@ by default: metrics, config, run metadata, and run summary. It does not upload
 datasets, generated sample directories, or checkpoints. It uses a persistent
 dataset cache on the self-hosted runner and a file lock around the initial
 STL-10 download so the matrix jobs do not repeatedly download the dataset.
+By default it uses the runner-local virtual environment at
+`/home/florianpfaff/fixed-noise-diffusion-work/Fixed-Noise-Diffusion/.venv/bin/python`
+instead of `actions/setup-python`, because the latter can hang on the current
+self-hosted runners before training starts. Override the `python_bin` workflow
+input if a runner uses a different environment path.
 
 ## Sample-Quality Evaluation
 

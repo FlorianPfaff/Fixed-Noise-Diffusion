@@ -69,7 +69,6 @@ def _make_torchvision_cifar_loaders(
 
     dataset_map = {
         "cifar10": datasets.CIFAR10,
-        "cifar100": datasets.CIFAR100,
     }
     try:
         dataset_cls = dataset_map[dataset_name]
@@ -137,7 +136,7 @@ def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
             data_cfg["image_size"],
             seed + 100_000,
         )
-    elif dataset_name in {"cifar10", "cifar100"}:
+    elif dataset_name == "cifar10":
         train_dataset, val_dataset = _make_torchvision_cifar_loaders(
             dataset_name,
             data_cfg,
