@@ -55,6 +55,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "sample_steps": 50,
         "sampler": "ddim",
         "enable_metrics": False,
+        "enable_heldout_pool": False,
+        "heldout_pool_seed": None,
+        "heldout_pool_seed_offset": 1_000_003,
     },
     "noise": {
         "mode": "gaussian",

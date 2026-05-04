@@ -16,7 +16,7 @@ from .evaluate import denoising_loss, first_real_batch, optional_fid_kid, sample
 from .integrity import build_run_metadata, build_run_summary, write_json
 from .logging_utils import MetricLogger
 from .model import build_model
-from .noise import GaussianNoiseSampler, make_noise_sampler
+from .noise import FixedPoolNoiseSampler, GaussianNoiseSampler, make_noise_sampler
 from .utils import (
     Timer,
     count_parameters,
@@ -65,11 +65,42 @@ def make_evaluation_samplers(
     return train_eval_sampler, gaussian_eval_sampler
 
 
+def make_heldout_pool_sampler(
+    config: dict[str, Any],
+    train_noise_sampler,
+    device: torch.device,
+):
+    eval_cfg = config["evaluation"]
+    if not bool(eval_cfg.get("enable_heldout_pool", False)):
+        return None
+    if not isinstance(train_noise_sampler, FixedPoolNoiseSampler):
+        return None
+
+    noise_cfg = config["noise"]
+    heldout_pool_seed = eval_cfg.get("heldout_pool_seed")
+    if heldout_pool_seed is None:
+        heldout_pool_seed = int(noise_cfg["pool_seed"]) + int(
+            eval_cfg.get("heldout_pool_seed_offset", 1_000_003)
+        )
+
+    return FixedPoolNoiseSampler(
+        image_shape=train_noise_sampler.image_shape,
+        device=device,
+        pool_size=train_noise_sampler.pool_size,
+        pool_seed=int(heldout_pool_seed),
+        index_seed=int(config["seed"]) + 70_000,
+        dtype=str(noise_cfg.get("pool_dtype", "float16")),
+        chunk_size=int(noise_cfg.get("pool_chunk_size", 8192)),
+        whiten=train_noise_sampler.whiten,
+    )
+
+
 def evaluate_checkpoint(
     model: torch.nn.Module,
     diffusion: GaussianDiffusion,
     loaders,
     train_noise_sampler,
+    heldout_noise_sampler,
     config: dict[str, Any],
     device: torch.device,
     run_dir: Path,
@@ -102,6 +133,20 @@ def evaluate_checkpoint(
         int(eval_cfg["denoising_batches"]),
         seed + 40_000 + epoch,
     )
+    heldout_pool_den_loss = None
+    heldout_pool_seed = None
+    if heldout_noise_sampler is not None:
+        heldout_eval_sampler = heldout_noise_sampler.fork(seed + 10_000 + epoch)
+        heldout_pool_seed = heldout_noise_sampler.pool_seed
+        heldout_pool_den_loss = denoising_loss(
+            model,
+            diffusion,
+            loaders.val,
+            heldout_eval_sampler,
+            device,
+            int(eval_cfg["denoising_batches"]),
+            seed + 30_000 + epoch,
+        )
     samples_path = run_dir / "samples" / f"epoch_{epoch:04d}.png"
     samples = sample_grid(
         model,
@@ -125,9 +170,21 @@ def evaluate_checkpoint(
         "train_den_loss": train_den_loss,
         "gaussian_den_loss": gaussian_den_loss,
         "denoising_gap": gaussian_den_loss - train_den_loss,
+        "heldout_pool_den_loss": heldout_pool_den_loss,
+        "heldout_pool_gap": (
+            None
+            if heldout_pool_den_loss is None
+            else heldout_pool_den_loss - train_den_loss
+        ),
+        "gaussian_minus_heldout_gap": (
+            None
+            if heldout_pool_den_loss is None
+            else gaussian_den_loss - heldout_pool_den_loss
+        ),
         "noise_mode": info.mode,
         "pool_size": info.pool_size,
         "pool_memory_mb": round(info.pool_memory_mb, 3),
+        "heldout_pool_seed": heldout_pool_seed,
         "samples_path": str(samples_path),
         "seconds": round(timer.elapsed(), 3),
         **metrics,
@@ -148,6 +205,7 @@ def train(config: dict[str, Any]) -> Path:
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
     train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
+    heldout_noise_sampler = make_heldout_pool_sampler(config, train_noise_sampler, device)
     metadata = build_run_metadata(config, run_dir, device, train_noise_sampler.info)
     write_json(run_dir / "run_metadata.json", metadata)
     optimizer = torch.optim.AdamW(
@@ -246,6 +304,7 @@ def train(config: dict[str, Any]) -> Path:
                 diffusion,
                 loaders,
                 train_noise_sampler,
+                heldout_noise_sampler,
                 config,
                 device,
                 run_dir,
