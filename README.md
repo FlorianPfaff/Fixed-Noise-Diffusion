@@ -1,11 +1,12 @@
 # Fixed-Noise Diffusion Starter
 
-Minimal CIFAR DDPM experiment stack for the WP2 fixed-noise reproduction:
+Minimal image DDPM experiment stack for the WP2 fixed-noise reproduction:
 fresh Gaussian noise versus reusable Gaussian template pools.
 
-The original controlled experiments use CIFAR-10. The repository now also
-supports CIFAR-100 as a harder validation dataset for checking whether the
-finite-support specialization effect transfers beyond CIFAR-10.
+The original controlled experiments use CIFAR-10. For a non-CIFAR validation
+dataset, use STL-10 with the `train+unlabeled` split resized to 32x32. This keeps
+the fixed-noise pool memory footprint comparable to CIFAR-10 while moving the
+validation away from the Tiny Images lineage.
 
 ## Environment
 
@@ -66,36 +67,38 @@ $env:PYTHONPATH = "src"
 py -3.12 -m fixed_noise_diffusion.plot_results --runs runs/cifar10_*
 ```
 
-## CIFAR-100 Validation
+## STL-10 Validation
 
-CIFAR-100 is intended as a targeted validation, not as a full replacement for
-the CIFAR-10 pool-size sweep. The recommended paper-facing check is:
+STL-10 is intended as a targeted validation, not as a full replacement for the
+CIFAR-10 pool-size sweep. The recommended paper-facing check is:
 
 - fresh Gaussian baseline,
 - fixed pool with `M=1k`,
 - fixed pool with `M=10k`,
 - fixed pool with `M=100k`,
 - seeds `0,1,2`,
-- base64 model, cosine schedule, 100 epochs.
+- base64 model, cosine schedule, 100 epochs,
+- STL-10 `train+unlabeled` split for training and `test` split for validation,
+  resized to 32x32.
 
 The base config is available as:
 
 ```powershell
-py -3.12 -m fixed_noise_diffusion.train --config cifar100_base.yaml
+py -3.12 -m fixed_noise_diffusion.train --config stl10_base.yaml
 ```
 
 For GPU servers registered as self-hosted GitHub runners, use the manual
 workflow:
 
 ```text
-.github/workflows/wp2-cifar100-validation.yml
+.github/workflows/wp2-stl10-validation.yml
 ```
 
-The workflow runs the 12 validation jobs above and uploads only compact
-artifacts by default: metrics, config, run metadata, and run summary. It does
-not upload datasets, generated sample directories, or checkpoints. Optional
-FID2048 evaluation can be enabled from the workflow inputs if the runner has
-sufficient time and storage.
+The workflow runs the 12 validation jobs above and uploads only compact artifacts
+by default: metrics, config, run metadata, and run summary. It does not upload
+datasets, generated sample directories, or checkpoints. It uses a persistent
+dataset cache on the self-hosted runner and a file lock around the initial
+STL-10 download so the matrix jobs do not repeatedly download the dataset.
 
 ## Sample-Quality Evaluation
 
@@ -111,7 +114,7 @@ py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
   --fid-feature 2048
 ```
 
-For a larger CIFAR FID run, use the training split for real statistics:
+For a larger FID run, use the training split for real statistics:
 
 ```powershell
 py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
