@@ -49,6 +49,9 @@ def _image_transform(data_cfg: dict[str, Any], native_size: int) -> Any:
 
     image_size = int(data_cfg["image_size"])
     steps: list[Any] = []
+    crop_size = data_cfg.get("center_crop_size")
+    if crop_size is not None:
+        steps.append(transforms.CenterCrop(int(crop_size)))
     if image_size != int(native_size) or bool(data_cfg.get("resize", False)):
         steps.append(transforms.Resize((image_size, image_size), antialias=True))
     steps.extend(
@@ -118,6 +121,33 @@ def _make_stl10_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, D
     return train_dataset, val_dataset
 
 
+def _make_celeba_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, Dataset]:
+    from torchvision import datasets
+
+    transform = _image_transform(data_cfg, native_size=int(data_cfg["image_size"]))
+    root = Path(data_cfg["data_dir"])
+    train_split = str(data_cfg.get("train_split", "train"))
+    val_split = str(data_cfg.get("val_split", "valid"))
+    target_type = data_cfg.get("target_type", "attr")
+    train_dataset = datasets.CelebA(
+        root=root,
+        split=train_split,
+        target_type=target_type,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    val_dataset = datasets.CelebA(
+        root=root,
+        split=val_split,
+        target_type=target_type,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
+    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
+    return train_dataset, val_dataset
+
+
 def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
     data_cfg = config["data"]
     seed = int(config["seed"])
@@ -144,6 +174,8 @@ def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
         )
     elif dataset_name == "stl10":
         train_dataset, val_dataset = _make_stl10_loaders(data_cfg, seed)
+    elif dataset_name in {"celeba", "celeba64"}:
+        train_dataset, val_dataset = _make_celeba_loaders(data_cfg, seed)
     else:
         raise ValueError(f"Unsupported dataset {dataset_name!r}")
 

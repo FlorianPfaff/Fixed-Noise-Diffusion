@@ -1,0 +1,43 @@
+inherits: cifar10_base.yaml
+
+run_name: celeba64_base
+
+data:
+  dataset: celeba
+  data_dir: data
+  download: true
+  train_split: train
+  val_split: valid
+  target_type: attr
+  image_size: 64
+  resize: true
+  center_crop_size: 178
+  channels: 3
+  batch_size: 64
+  eval_batch_size: 64
+  num_workers: 4
+  subset_size:
+  eval_subset_size: 2048
+
+diffusion:
+  beta_schedule: cosine
+
+training:
+  epochs: 50
+  checkpoint_epochs: [1, 5, 10, 25, 50]
+  save_checkpoint: true
+
+evaluation:
+  denoising_batches: 16
+  sample_count: 64
+  sample_steps: 50
+  sampler: ddim
+  enable_metrics: false
+
+noise:
+  mode: gaussian
+  pool_size:
+  pool_seed: 4242
+  pool_dtype: float16
+  pool_chunk_size: 4096
+  whiten: false
