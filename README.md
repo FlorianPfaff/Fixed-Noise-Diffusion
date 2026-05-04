@@ -105,6 +105,30 @@ instead of `actions/setup-python`, because the latter can hang on the current
 self-hosted runners before training starts. Override the `python_bin` workflow
 input if a runner uses a different environment path.
 
+## CelebA-64 Validation
+
+CelebA-64 is available as a larger, face-domain validation after the CIFAR-10 and
+STL-10 denoising-gap checks are stable. The packaged config center-crops CelebA
+images to 178x178 and resizes them to 64x64:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.train --config celeba64_base.yaml
+```
+
+For self-hosted GPU runners, use:
+
+```text
+.github/workflows/wp2-celeba64-validation.yml
+```
+
+The workflow mirrors the STL-10 validation matrix over Gaussian, fixed-pool 1k,
+10k, and 100k conditions with seeds 0, 1, and 2. CelebA is larger and uses
+64x64 noise pools, so the default workflow budget is 50 epochs and compact
+artifacts only. The public torchvision CelebA download depends on Google Drive
+and may hit quota limits, so the workflow assumes by default that the dataset has
+already been staged in the persistent cache. Set `download_data=true` only when
+the runner can access the upstream CelebA files.
+
 ## Sample-Quality Evaluation
 
 Evaluate saved checkpoints with Inception FID/KID:

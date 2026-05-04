@@ -1,0 +1,238 @@
+name: WP2 CelebA-64 validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Self-hosted runner label to use"
+        required: true
+        default: "self-hosted"
+      epochs:
+        description: "Training epochs; also used as the final checkpoint epoch"
+        required: true
+        default: "50"
+      run_group:
+        description: "Output group name under runs/"
+        required: true
+        default: "wp2_celeba64_validation"
+      data_dir:
+        description: "Persistent dataset cache on the self-hosted runner"
+        required: true
+        default: "/home/florianpfaff/datasets/fixed-noise-diffusion"
+      download_data:
+        description: "Attempt to download CelebA into the persistent cache"
+        required: true
+        type: boolean
+        default: false
+      python_bin:
+        description: "Python executable on the self-hosted runner; leave empty to auto-detect"
+        required: false
+        default: "/home/florianpfaff/fixed-noise-diffusion-work/Fixed-Noise-Diffusion/.venv/bin/python"
+      cuda_visible_devices:
+        description: "Optional CUDA_VISIBLE_DEVICES value; leave empty to use the runner default"
+        required: false
+        default: ""
+      run_fid:
+        description: "Also run FID2048 evaluation from the final checkpoint"
+        required: true
+        type: boolean
+        default: false
+      fid_sample_count:
+        description: "Generated samples for optional FID evaluation"
+        required: true
+        default: "10000"
+      fid_real_count:
+        description: "Real training images for optional FID evaluation"
+        required: true
+        default: "50000"
+
+jobs:
+  celeba64-validation:
+    name: celeba64-${{ matrix.condition }}-seed${{ matrix.seed }}
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [0, 1, 2]
+        condition: [gaussian, fixed_pool_1k, fixed_pool_10k, fixed_pool_100k]
+
+    env:
+      PYTHONPATH: src
+      PYTHONNOUSERSITE: "1"
+      OUTPUT_ROOT: runs/${{ inputs.run_group }}
+      DATA_DIR: ${{ inputs.data_dir }}
+      CELEBA_DOWNLOAD: ${{ inputs.download_data }}
+      FND_PYTHON_BIN: ${{ inputs.python_bin }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Select Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${FND_PYTHON_BIN}" ]; then
+            PYTHON_BIN="${FND_PYTHON_BIN}"
+          elif [ -x ".venv/bin/python" ]; then
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          elif command -v python3.12 >/dev/null 2>&1; then
+            python3.12 -m venv .venv
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          elif command -v python3 >/dev/null 2>&1; then
+            python3 -m venv .venv
+            PYTHON_BIN="${PWD}/.venv/bin/python"
+          else
+            echo "No usable Python executable found" >&2
+            exit 2
+          fi
+          if [ ! -x "${PYTHON_BIN}" ]; then
+            echo "Configured Python executable is not executable: ${PYTHON_BIN}" >&2
+            exit 2
+          fi
+          "${PYTHON_BIN}" --version
+          echo "FND_PYTHON=${PYTHON_BIN}" >> "${GITHUB_ENV}"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${FND_PYTHON}" -m pip install --upgrade pip
+          if ! "${FND_PYTHON}" - <<'PY'
+          import torch
+          import torchvision
+          if not torch.cuda.is_available():
+              raise SystemExit(1)
+          print(f"torch={torch.__version__}; cuda={torch.version.cuda}; device={torch.cuda.get_device_name(0)}")
+          PY
+          then
+            "${FND_PYTHON}" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+          fi
+          if "${FND_PYTHON}" - <<'PY'
+          import sys
+          raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+          PY
+          then
+            "${FND_PYTHON}" -m pip install -e .
+            if [ "${{ inputs.run_fid }}" = "true" ]; then
+              "${FND_PYTHON}" -m pip install -e '.[metrics]'
+            fi
+          else
+            echo "::warning::Using Python below the package metadata floor; relying on PYTHONPATH=src for self-hosted runner execution."
+            "${FND_PYTHON}" -m pip install gdown matplotlib numpy pillow pyyaml tqdm
+            if [ "${{ inputs.run_fid }}" = "true" ]; then
+              "${FND_PYTHON}" -m pip install 'torchmetrics[image]>=1.4' 'torch-fidelity>=0.3'
+            fi
+          fi
+
+      - name: Prepare CelebA dataset cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${DATA_DIR}"
+          (
+            flock 9
+            "${FND_PYTHON}" - <<'PY'
+          import os
+          from torchvision import datasets
+
+          root = os.environ["DATA_DIR"]
+          download = os.environ["CELEBA_DOWNLOAD"].lower() == "true"
+          for split in ("train", "valid"):
+              try:
+                  datasets.CelebA(root=root, split=split, target_type="attr", download=download)
+              except RuntimeError:
+                  print(
+                      "CelebA cache is not ready. Stage the torchvision CelebA files "
+                      f"under {root}/celeba or rerun with download_data=true.",
+                      flush=True,
+                  )
+                  raise
+          print(f"CelebA cache ready at {root}")
+          PY
+          ) 9>"${DATA_DIR}/.celeba_download.lock"
+
+      - name: Run CelebA-64 condition
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.cuda_visible_devices }}" ]; then
+            export CUDA_VISIBLE_DEVICES="${{ inputs.cuda_visible_devices }}"
+          fi
+
+          CONDITION="${{ matrix.condition }}"
+          SEED="${{ matrix.seed }}"
+          EPOCHS="${{ inputs.epochs }}"
+          RUN_NAME="wp2_${EPOCHS}ep_celeba64_${CONDITION}_seed${SEED}"
+          mkdir -p "${OUTPUT_ROOT}"
+
+          case "${CONDITION}" in
+            gaussian)
+              NOISE_MODE="gaussian"
+              POOL_SIZE="null"
+              ;;
+            fixed_pool_1k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="1000"
+              ;;
+            fixed_pool_10k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="10000"
+              ;;
+            fixed_pool_100k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="100000"
+              ;;
+            *)
+              echo "Unknown condition: ${CONDITION}" >&2
+              exit 2
+              ;;
+          esac
+
+          "${FND_PYTHON}" -m fixed_noise_diffusion.train \
+            --config celeba64_base.yaml \
+            --set "run_name=${RUN_NAME}" \
+            --set "output_dir=${OUTPUT_ROOT}" \
+            --set "seed=${SEED}" \
+            --set "data.data_dir=${DATA_DIR}" \
+            --set "data.download=false" \
+            --set "diffusion.beta_schedule=cosine" \
+            --set "training.epochs=${EPOCHS}" \
+            --set "training.checkpoint_epochs=[1,5,10,25,${EPOCHS}]" \
+            --set "training.save_checkpoint=true" \
+            --set "noise.mode=${NOISE_MODE}" \
+            --set "noise.pool_size=${POOL_SIZE}"
+
+          RUN_DIR="${OUTPUT_ROOT}/${RUN_NAME}"
+          COMPACT_DIR="compact_artifacts/${RUN_NAME}"
+          mkdir -p "${COMPACT_DIR}"
+          for file in metrics.csv metrics.jsonl config.yaml run_metadata.json run_summary.json; do
+            if [ -f "${RUN_DIR}/${file}" ]; then
+              cp "${RUN_DIR}/${file}" "${COMPACT_DIR}/${file}"
+            fi
+          done
+
+          if [ "${{ inputs.run_fid }}" = "true" ]; then
+            "${FND_PYTHON}" -m fixed_noise_diffusion.evaluate_sample_quality \
+              --sweep-dir "${OUTPUT_ROOT}" \
+              --output-dir "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}" \
+              --run "${RUN_NAME}" \
+              --epochs "${EPOCHS}" \
+              --sample-count "${{ inputs.fid_sample_count }}" \
+              --real-count "${{ inputs.fid_real_count }}" \
+              --real-split train \
+              --fid-feature 2048 \
+              --sample-steps 50
+            cp "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}/sample_quality.csv" "${COMPACT_DIR}/sample_quality.csv"
+            cp "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}/sample_quality.jsonl" "${COMPACT_DIR}/sample_quality.jsonl"
+          fi
+
+      - name: Upload compact run artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: celeba64-${{ matrix.condition }}-seed${{ matrix.seed }}-compact
+          path: compact_artifacts/
+          if-no-files-found: warn
+          retention-days: 14

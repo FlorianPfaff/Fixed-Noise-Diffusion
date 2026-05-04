@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Minimal CIFAR DDPM stack for fixed Gaussian noise pool experiments."
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "gdown>=5.1",
   "matplotlib>=3.8",
   "numpy>=1.26",
   "pillow>=10.0",
