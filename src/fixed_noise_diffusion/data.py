@@ -44,6 +44,22 @@ def _subset(dataset: Dataset, size: int | None, seed: int) -> Dataset:
     return Subset(dataset, indices)
 
 
+def _make_dataset_pair(
+    dataset_cls: Any,
+    common_kwargs: dict[str, Any],
+    train_kwargs: dict[str, Any],
+    val_kwargs: dict[str, Any],
+    data_cfg: dict[str, Any],
+    seed: int,
+) -> tuple[Dataset, Dataset]:
+    train_dataset = dataset_cls(**common_kwargs, **train_kwargs)
+    val_dataset = dataset_cls(**common_kwargs, **val_kwargs)
+    return (
+        _subset(train_dataset, data_cfg.get("subset_size"), seed),
+        _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1),
+    )
+
+
 def _image_transform(data_cfg: dict[str, Any], native_size: int) -> Any:
     from torchvision import transforms
 
@@ -80,21 +96,18 @@ def _make_torchvision_cifar_loaders(
 
     transform = _image_transform(data_cfg, native_size=32)
     root = Path(data_cfg["data_dir"])
-    train_dataset = dataset_cls(
-        root=root,
-        train=True,
-        download=bool(data_cfg["download"]),
-        transform=transform,
+    return _make_dataset_pair(
+        dataset_cls,
+        {
+            "root": root,
+            "download": bool(data_cfg["download"]),
+            "transform": transform,
+        },
+        {"train": True},
+        {"train": False},
+        data_cfg,
+        seed,
     )
-    val_dataset = dataset_cls(
-        root=root,
-        train=False,
-        download=bool(data_cfg["download"]),
-        transform=transform,
-    )
-    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
-    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
-    return train_dataset, val_dataset
 
 
 def _make_stl10_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, Dataset]:
@@ -104,24 +117,24 @@ def _make_stl10_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, D
     root = Path(data_cfg["data_dir"])
     train_split = str(data_cfg.get("train_split", "train+unlabeled"))
     val_split = str(data_cfg.get("val_split", "test"))
-    train_dataset = datasets.STL10(
-        root=root,
-        split=train_split,
-        download=bool(data_cfg["download"]),
-        transform=transform,
+    return _make_dataset_pair(
+        datasets.STL10,
+        {
+            "root": root,
+            "download": bool(data_cfg["download"]),
+            "transform": transform,
+        },
+        {"split": train_split},
+        {"split": val_split},
+        data_cfg,
+        seed,
     )
-    val_dataset = datasets.STL10(
-        root=root,
-        split=val_split,
-        download=bool(data_cfg["download"]),
-        transform=transform,
-    )
-    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
-    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
-    return train_dataset, val_dataset
 
 
-def _make_celeba_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, Dataset]:
+def _make_celeba_loaders(
+    data_cfg: dict[str, Any],
+    seed: int,
+) -> tuple[Dataset, Dataset]:
     from torchvision import datasets
 
     transform = _image_transform(data_cfg, native_size=int(data_cfg["image_size"]))
@@ -129,23 +142,19 @@ def _make_celeba_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, 
     train_split = str(data_cfg.get("train_split", "train"))
     val_split = str(data_cfg.get("val_split", "valid"))
     target_type = data_cfg.get("target_type", "attr")
-    train_dataset = datasets.CelebA(
-        root=root,
-        split=train_split,
-        target_type=target_type,
-        download=bool(data_cfg["download"]),
-        transform=transform,
+    return _make_dataset_pair(
+        datasets.CelebA,
+        {
+            "root": root,
+            "target_type": target_type,
+            "download": bool(data_cfg["download"]),
+            "transform": transform,
+        },
+        {"split": train_split},
+        {"split": val_split},
+        data_cfg,
+        seed,
     )
-    val_dataset = datasets.CelebA(
-        root=root,
-        split=val_split,
-        target_type=target_type,
-        download=bool(data_cfg["download"]),
-        transform=transform,
-    )
-    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
-    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
-    return train_dataset, val_dataset
 
 
 def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
