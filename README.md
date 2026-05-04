@@ -179,6 +179,27 @@ py -3.12 -m fixed_noise_diffusion.evaluate_timestep_diagnostics `
   --batches 16
 ```
 
+Evaluate fixed-pool generalization from saved checkpoints:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.evaluate_pool_generalization `
+  --sweep-dir runs/wp2_100ep_reduced `
+  --output-dir runs/wp2_pool_generalization `
+  --epochs 100 `
+  --batches 16
+```
+
+For future fixed-pool training runs, the same held-out pool diagnostic can be
+logged during checkpoint evaluation without saving checkpoints:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.train --config cifar10_fixed_pool_1k.yaml `
+  --set evaluation.enable_heldout_pool=true
+```
+
+This adds `heldout_pool_den_loss`, `heldout_pool_gap`, and
+`gaussian_minus_heldout_gap` to eval rows. Gaussian runs ignore this option.
+
 ## Key Diagnostic
 
 The main WP2 diagnostic is:

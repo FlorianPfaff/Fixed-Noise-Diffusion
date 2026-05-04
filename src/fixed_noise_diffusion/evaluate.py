@@ -94,13 +94,14 @@ def sample_grid(
     output_path: Path,
     seed: int,
 ) -> torch.Tensor:
-    from torchvision.utils import save_image
-
     eval_cfg = config["evaluation"]
     data_cfg = config["data"]
     count = int(eval_cfg["sample_count"])
     if count <= 0:
         return torch.empty(0)
+
+    from torchvision.utils import save_image
+
     generator = generator_for(device, seed)
     shape = (
         count,
