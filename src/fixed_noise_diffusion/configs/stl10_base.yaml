@@ -1,0 +1,41 @@
+inherits: cifar10_base.yaml
+
+run_name: stl10_base
+
+data:
+  dataset: stl10
+  data_dir: data
+  download: true
+  train_split: train+unlabeled
+  val_split: test
+  image_size: 32
+  resize: true
+  channels: 3
+  batch_size: 128
+  eval_batch_size: 128
+  num_workers: 4
+  subset_size:
+  eval_subset_size: 2048
+
+diffusion:
+  beta_schedule: cosine
+
+training:
+  epochs: 100
+  checkpoint_epochs: [1, 5, 10, 25, 50, 100]
+  save_checkpoint: true
+
+evaluation:
+  denoising_batches: 16
+  sample_count: 64
+  sample_steps: 50
+  sampler: ddim
+  enable_metrics: false
+
+noise:
+  mode: gaussian
+  pool_size:
+  pool_seed: 4242
+  pool_dtype: float16
+  pool_chunk_size: 8192
+  whiten: false
