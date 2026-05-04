@@ -1,0 +1,161 @@
+name: WP2 CIFAR-100 validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Self-hosted runner label to use"
+        required: true
+        default: "self-hosted"
+      epochs:
+        description: "Training epochs; also used as the final checkpoint epoch"
+        required: true
+        default: "100"
+      run_group:
+        description: "Output group name under runs/"
+        required: true
+        default: "wp2_cifar100_validation"
+      cuda_visible_devices:
+        description: "Optional CUDA_VISIBLE_DEVICES value; leave empty to use the runner default"
+        required: false
+        default: ""
+      run_fid:
+        description: "Also run FID2048 evaluation from the final checkpoint"
+        required: true
+        type: boolean
+        default: false
+      fid_sample_count:
+        description: "Generated samples for optional FID evaluation"
+        required: true
+        default: "10000"
+      fid_real_count:
+        description: "Real training images for optional FID evaluation"
+        required: true
+        default: "50000"
+
+jobs:
+  cifar100-validation:
+    name: cifar100-${{ matrix.condition }}-seed${{ matrix.seed }}
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [0, 1, 2]
+        condition: [gaussian, fixed_pool_1k, fixed_pool_10k, fixed_pool_100k]
+
+    env:
+      PYTHONPATH: src
+      OUTPUT_ROOT: runs/${{ inputs.run_group }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if ! python - <<'PY'
+          import torch
+          import torchvision
+          if not torch.cuda.is_available():
+              raise SystemExit(1)
+          print(f"torch={torch.__version__}; cuda={torch.version.cuda}; device={torch.cuda.get_device_name(0)}")
+          PY
+          then
+            python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+          fi
+          python -m pip install -e .
+          if [ "${{ inputs.run_fid }}" = "true" ]; then
+            python -m pip install -e '.[metrics]'
+          fi
+
+      - name: Run CIFAR-100 condition
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.cuda_visible_devices }}" ]; then
+            export CUDA_VISIBLE_DEVICES="${{ inputs.cuda_visible_devices }}"
+          fi
+
+          CONDITION="${{ matrix.condition }}"
+          SEED="${{ matrix.seed }}"
+          EPOCHS="${{ inputs.epochs }}"
+          RUN_NAME="wp2_${EPOCHS}ep_cifar100_${CONDITION}_seed${SEED}"
+          mkdir -p "${OUTPUT_ROOT}"
+
+          case "${CONDITION}" in
+            gaussian)
+              NOISE_MODE="gaussian"
+              POOL_SIZE="null"
+              ;;
+            fixed_pool_1k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="1000"
+              ;;
+            fixed_pool_10k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="10000"
+              ;;
+            fixed_pool_100k)
+              NOISE_MODE="fixed_pool"
+              POOL_SIZE="100000"
+              ;;
+            *)
+              echo "Unknown condition: ${CONDITION}" >&2
+              exit 2
+              ;;
+          esac
+
+          python -m fixed_noise_diffusion.train \
+            --config cifar100_base.yaml \
+            --set "run_name=${RUN_NAME}" \
+            --set "output_dir=${OUTPUT_ROOT}" \
+            --set "seed=${SEED}" \
+            --set "diffusion.beta_schedule=cosine" \
+            --set "training.epochs=${EPOCHS}" \
+            --set "training.checkpoint_epochs=[${EPOCHS}]" \
+            --set "training.save_checkpoint=true" \
+            --set "noise.mode=${NOISE_MODE}" \
+            --set "noise.pool_size=${POOL_SIZE}"
+
+          RUN_DIR="${OUTPUT_ROOT}/${RUN_NAME}"
+          COMPACT_DIR="compact_artifacts/${RUN_NAME}"
+          mkdir -p "${COMPACT_DIR}"
+          for file in metrics.csv metrics.jsonl config.yaml run_metadata.json run_summary.json; do
+            if [ -f "${RUN_DIR}/${file}" ]; then
+              cp "${RUN_DIR}/${file}" "${COMPACT_DIR}/${file}"
+            fi
+          done
+
+          if [ "${{ inputs.run_fid }}" = "true" ]; then
+            python -m fixed_noise_diffusion.evaluate_sample_quality \
+              --sweep-dir "${OUTPUT_ROOT}" \
+              --output-dir "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}" \
+              --run "${RUN_NAME}" \
+              --epochs "${EPOCHS}" \
+              --sample-count "${{ inputs.fid_sample_count }}" \
+              --real-count "${{ inputs.fid_real_count }}" \
+              --real-split train \
+              --fid-feature 2048 \
+              --sample-steps 50
+            cp "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}/sample_quality.csv" "${COMPACT_DIR}/sample_quality.csv"
+            cp "${OUTPUT_ROOT}/sample_quality_${RUN_NAME}/sample_quality.jsonl" "${COMPACT_DIR}/sample_quality.jsonl"
+          fi
+
+      - name: Upload compact run artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cifar100-${{ matrix.condition }}-seed${{ matrix.seed }}-compact
+          path: compact_artifacts/
+          if-no-files-found: warn
+          retention-days: 14
