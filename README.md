@@ -1,7 +1,11 @@
 # Fixed-Noise Diffusion Starter
 
-Minimal CIFAR-10 DDPM experiment stack for the WP2 fixed-noise reproduction:
+Minimal CIFAR DDPM experiment stack for the WP2 fixed-noise reproduction:
 fresh Gaussian noise versus reusable Gaussian template pools.
+
+The original controlled experiments use CIFAR-10. The repository now also
+supports CIFAR-100 as a harder validation dataset for checking whether the
+finite-support specialization effect transfers beyond CIFAR-10.
 
 ## Environment
 
@@ -28,7 +32,7 @@ py -3.12 -m fixed_noise_diffusion.train --config smoke.yaml
 The smoke run uses synthetic images, one train step, one denoising validation
 pass, and one sample grid.
 
-## WP2 First Sweep
+## WP2 First CIFAR-10 Sweep
 
 Run the Gaussian baseline and fixed-pool configs:
 
@@ -62,6 +66,39 @@ $env:PYTHONPATH = "src"
 py -3.12 -m fixed_noise_diffusion.plot_results --runs runs/cifar10_*
 ```
 
+## CIFAR-100 Validation
+
+CIFAR-100 is intended as a targeted validation, not as a full replacement for
+the CIFAR-10 pool-size sweep. The recommended paper-facing check is:
+
+- fresh Gaussian baseline,
+- fixed pool with `M=1k`,
+- fixed pool with `M=10k`,
+- fixed pool with `M=100k`,
+- seeds `0,1,2`,
+- base64 model, cosine schedule, 100 epochs.
+
+The base config is available as:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.train --config cifar100_base.yaml
+```
+
+For GPU servers registered as self-hosted GitHub runners, use the manual
+workflow:
+
+```text
+.github/workflows/wp2-cifar100-validation.yml
+```
+
+The workflow runs the 12 validation jobs above and uploads only compact
+artifacts by default: metrics, config, run metadata, and run summary. It does
+not upload datasets, generated sample directories, or checkpoints. Optional
+FID2048 evaluation can be enabled from the workflow inputs if the runner has
+sufficient time and storage.
+
+## Sample-Quality Evaluation
+
 Evaluate saved checkpoints with Inception FID/KID:
 
 ```powershell
@@ -74,7 +111,7 @@ py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
   --fid-feature 2048
 ```
 
-For a larger CIFAR-10 FID run, use the training split for real statistics:
+For a larger CIFAR FID run, use the training split for real statistics:
 
 ```powershell
 py -3.12 -m fixed_noise_diffusion.evaluate_sample_quality `
