@@ -44,12 +44,28 @@ def _subset(dataset: Dataset, size: int | None, seed: int) -> Dataset:
     return Subset(dataset, indices)
 
 
+def _image_transform(data_cfg: dict[str, Any], native_size: int) -> Any:
+    from torchvision import transforms
+
+    image_size = int(data_cfg["image_size"])
+    steps: list[Any] = []
+    if image_size != int(native_size) or bool(data_cfg.get("resize", False)):
+        steps.append(transforms.Resize((image_size, image_size), antialias=True))
+    steps.extend(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ]
+    )
+    return transforms.Compose(steps)
+
+
 def _make_torchvision_cifar_loaders(
     dataset_name: str,
     data_cfg: dict[str, Any],
     seed: int,
 ) -> tuple[Dataset, Dataset]:
-    from torchvision import datasets, transforms
+    from torchvision import datasets
 
     dataset_map = {
         "cifar10": datasets.CIFAR10,
@@ -60,12 +76,7 @@ def _make_torchvision_cifar_loaders(
     except KeyError as exc:
         raise ValueError(f"Unsupported CIFAR dataset {dataset_name!r}") from exc
 
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-        ]
-    )
+    transform = _image_transform(data_cfg, native_size=32)
     root = Path(data_cfg["data_dir"])
     train_dataset = dataset_cls(
         root=root,
@@ -76,6 +87,30 @@ def _make_torchvision_cifar_loaders(
     val_dataset = dataset_cls(
         root=root,
         train=False,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    train_dataset = _subset(train_dataset, data_cfg.get("subset_size"), seed)
+    val_dataset = _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1)
+    return train_dataset, val_dataset
+
+
+def _make_stl10_loaders(data_cfg: dict[str, Any], seed: int) -> tuple[Dataset, Dataset]:
+    from torchvision import datasets
+
+    transform = _image_transform(data_cfg, native_size=96)
+    root = Path(data_cfg["data_dir"])
+    train_split = str(data_cfg.get("train_split", "train+unlabeled"))
+    val_split = str(data_cfg.get("val_split", "test"))
+    train_dataset = datasets.STL10(
+        root=root,
+        split=train_split,
+        download=bool(data_cfg["download"]),
+        transform=transform,
+    )
+    val_dataset = datasets.STL10(
+        root=root,
+        split=val_split,
         download=bool(data_cfg["download"]),
         transform=transform,
     )
@@ -108,6 +143,8 @@ def make_dataloaders(config: dict[str, Any]) -> LoaderBundle:
             data_cfg,
             seed,
         )
+    elif dataset_name == "stl10":
+        train_dataset, val_dataset = _make_stl10_loaders(data_cfg, seed)
     else:
         raise ValueError(f"Unsupported dataset {dataset_name!r}")
 
