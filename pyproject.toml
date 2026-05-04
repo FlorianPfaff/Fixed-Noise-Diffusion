@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fixed-noise-diffusion"
 version = "0.1.0"
-description = "Minimal CIFAR-10 DDPM stack for fixed Gaussian noise pool experiments."
+description = "Minimal CIFAR DDPM stack for fixed Gaussian noise pool experiments."
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "matplotlib>=3.8",
