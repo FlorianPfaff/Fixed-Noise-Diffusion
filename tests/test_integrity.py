@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+
 from fixed_noise_diffusion.config import load_config
 from fixed_noise_diffusion.train import train
 

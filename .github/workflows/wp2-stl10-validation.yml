@@ -1,6 +1,7 @@
 name: WP2 STL-10 validation
 
 on:
+  # checkov:skip=CKV_GHA_7: Manual self-hosted experiment workflow intentionally exposes bounded runtime inputs.
   workflow_dispatch:
     inputs:
       runner_label:
@@ -40,6 +41,9 @@ on:
         description: "Real training images for optional FID evaluation"
         required: true
         default: "50000"
+
+permissions:
+  contents: read
 
 jobs:
   stl10-validation:
