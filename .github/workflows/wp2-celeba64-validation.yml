@@ -103,9 +103,37 @@ jobs:
           from torchvision import datasets
 
           root = os.environ["DATA_DIR"]
-          for split in ("train", "valid"):
-              datasets.CelebA(root=root, split=split, target_type="attr", download=True)
-          print(f"CelebA cache ready at {root}")
+
+          def check_cache() -> bool:
+              ok = True
+              for split in ("train", "valid"):
+                  try:
+                      dataset = datasets.CelebA(
+                          root=root,
+                          split=split,
+                          target_type="attr",
+                          download=False,
+                      )
+                      print(f"CelebA {split} cache hit: {len(dataset)} examples")
+                  except RuntimeError as exc:
+                      print(f"CelebA {split} cache miss: {exc}")
+                      ok = False
+              return ok
+
+          if check_cache():
+              print(f"CelebA cache ready at {root}; no download needed")
+          else:
+              print(f"Preparing CelebA cache at {root}")
+              for split in ("train", "valid"):
+                  datasets.CelebA(
+                      root=root,
+                      split=split,
+                      target_type="attr",
+                      download=True,
+                  )
+              if not check_cache():
+                  raise RuntimeError(f"CelebA cache was not valid after download at {root}")
+              print(f"CelebA cache ready at {root}")
           PY
           ) 9>"${DATA_DIR}/.celeba_download.lock"
 
