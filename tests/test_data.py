@@ -1,6 +1,5 @@
-from PIL import Image
-
 from fixed_noise_diffusion.data import _image_transform
+from PIL import Image
 
 
 def test_center_crop_resize_transform_returns_square_normalized_tensor():
