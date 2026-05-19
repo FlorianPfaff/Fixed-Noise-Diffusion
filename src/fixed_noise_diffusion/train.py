@@ -32,6 +32,12 @@ def _should_checkpoint(epoch: int, training_cfg: dict[str, Any]) -> bool:
     return int(epoch) in {int(value) for value in checkpoint_epochs}
 
 
+def _pool_fingerprint_for_checkpoint(train_noise_sampler) -> dict[str, Any] | None:
+    if isinstance(train_noise_sampler, FixedPoolNoiseSampler):
+        return train_noise_sampler.pool_fingerprint()
+    return None
+
+
 def _save_checkpoint(
     run_dir: Path,
     epoch: int,
@@ -39,6 +45,7 @@ def _save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     config: dict[str, Any],
+    train_pool_fingerprint: dict[str, Any] | None = None,
 ) -> None:
     checkpoint = {
         "epoch": epoch,
@@ -47,6 +54,8 @@ def _save_checkpoint(
         "optimizer": optimizer.state_dict(),
         "config": config,
     }
+    if train_pool_fingerprint is not None:
+        checkpoint["train_noise_pool_fingerprint"] = train_pool_fingerprint
     torch.save(checkpoint, run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt")
 
 
@@ -251,7 +260,10 @@ def train(config: dict[str, Any]) -> Path:
     heldout_noise_sampler = make_heldout_pool_sampler(
         config, train_noise_sampler, device
     )
+    train_pool_fingerprint = _pool_fingerprint_for_checkpoint(train_noise_sampler)
     metadata = build_run_metadata(config, run_dir, device, train_noise_sampler.info)
+    if train_pool_fingerprint is not None:
+        metadata["train_noise_pool_fingerprint"] = train_pool_fingerprint
     write_json(run_dir / "run_metadata.json", metadata)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -372,7 +384,15 @@ def train(config: dict[str, Any]) -> Path:
                 timer,
             )
             if bool(config["training"].get("save_checkpoint", True)):
-                _save_checkpoint(run_dir, epoch, global_step, model, optimizer, config)
+                _save_checkpoint(
+                    run_dir,
+                    epoch,
+                    global_step,
+                    model,
+                    optimizer,
+                    config,
+                    train_pool_fingerprint=train_pool_fingerprint,
+                )
 
         if max_train_steps is not None and global_step >= int(max_train_steps):
             break

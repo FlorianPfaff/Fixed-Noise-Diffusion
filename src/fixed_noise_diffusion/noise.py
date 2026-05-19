@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -98,6 +100,38 @@ class FixedPoolNoiseSampler:
             std = work.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
             pool = ((work - mean) / std).to(dtype=self.dtype)
         return pool.pin_memory() if torch.cuda.is_available() else pool
+
+    def _fingerprint_indices(self, sample_rows: int = 16) -> list[int]:
+        sample_rows = max(1, min(int(sample_rows), self.pool_size))
+        if sample_rows == 1:
+            return [0]
+        if sample_rows == self.pool_size:
+            return list(range(self.pool_size))
+        return [
+            round(index * (self.pool_size - 1) / (sample_rows - 1))
+            for index in range(sample_rows)
+        ]
+
+    def pool_fingerprint(self, sample_rows: int = 16) -> dict[str, Any]:
+        """Return a compact deterministic fingerprint for the realized pool."""
+        indices = self._fingerprint_indices(sample_rows)
+        metadata: dict[str, Any] = {
+            "fingerprint_version": 1,
+            "image_shape": list(self.image_shape),
+            "pool_size": self.pool_size,
+            "pool_seed": self.pool_seed,
+            "pool_dtype": str(self.pool.dtype).replace("torch.", ""),
+            "pool_chunk_size": self.chunk_size,
+            "whiten": self.whiten,
+            "sample_indices": indices,
+        }
+        hasher = hashlib.sha256()
+        payload = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        hasher.update(payload.encode("utf-8"))
+        for index in indices:
+            row = self.pool[int(index)].detach().cpu().contiguous()
+            hasher.update(row.view(torch.uint8).numpy().tobytes())
+        return {**metadata, "sha256": hasher.hexdigest()}
 
     def sample(self, batch_size: int) -> torch.Tensor:
         indices = torch.randint(

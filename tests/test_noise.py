@@ -28,6 +28,45 @@ def test_fixed_pool_reuses_existing_pool_on_fork():
     assert fork.sample(2).shape == (2, 3, 4, 4)
 
 
+def test_fixed_pool_fingerprint_is_stable_and_detects_pool_seed():
+    sampler_a = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=1,
+        index_seed=2,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+    sampler_b = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=1,
+        index_seed=3,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+    sampler_c = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=9,
+        index_seed=2,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+
+    fingerprint_a = sampler_a.pool_fingerprint()
+
+    assert fingerprint_a == sampler_b.pool_fingerprint()
+    assert fingerprint_a["sha256"] != sampler_c.pool_fingerprint()["sha256"]
+    assert sampler_a.fork(99).pool_fingerprint() == fingerprint_a
+
+
 def test_gaussian_sampler_shape():
     sampler = GaussianNoiseSampler((3, 8, 8), torch.device("cpu"), seed=1)
     noise = sampler.sample(5)

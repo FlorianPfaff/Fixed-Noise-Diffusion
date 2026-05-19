@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .evaluate import denoising_loss
@@ -80,6 +82,55 @@ def _loss_or_blank(value: float | None) -> str:
     return "" if value is None else format_float(value)
 
 
+def load_checkpoint_pool_fingerprint(
+    run_dir: Path,
+    epoch: int,
+    device: torch.device,
+) -> dict[str, Any] | None:
+    checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    fingerprint = checkpoint.get("train_noise_pool_fingerprint")
+    if fingerprint is None:
+        return None
+    if not isinstance(fingerprint, dict):
+        raise ValueError(
+            f"Invalid train_noise_pool_fingerprint in {checkpoint_path}: "
+            f"expected dict, got {type(fingerprint).__name__}"
+        )
+    return fingerprint
+
+
+def verify_train_pool_fingerprint(
+    run_dir: Path,
+    epoch: int,
+    train_sampler: Any,
+    device: torch.device,
+) -> str:
+    checkpoint_fingerprint = load_checkpoint_pool_fingerprint(run_dir, epoch, device)
+    if checkpoint_fingerprint is None:
+        return ""
+    if not isinstance(train_sampler, FixedPoolNoiseSampler):
+        raise ValueError(
+            f"{run_dir} epoch {epoch} contains a fixed-pool fingerprint, "
+            "but the reconstructed training noise sampler is not fixed-pool"
+        )
+
+    current_fingerprint = train_sampler.pool_fingerprint()
+    if checkpoint_fingerprint != current_fingerprint:
+        raise ValueError(
+            f"Reconstructed train noise pool for {run_dir} epoch {epoch} "
+            "does not match the checkpoint fingerprint "
+            f"(checkpoint sha256="
+            f"{checkpoint_fingerprint.get('sha256', '<missing>')}, "
+            f"reconstructed sha256={current_fingerprint.get('sha256', '<missing>')}). "
+            "Check noise.pool_seed, noise.pool_dtype, noise.pool_chunk_size, "
+            "noise.whiten, and data image shape."
+        )
+    return str(current_fingerprint["sha256"])
+
+
 def evaluate_run_epoch(
     run_dir: Path,
     epoch: int,
@@ -95,6 +146,9 @@ def evaluate_run_epoch(
     )
     loaders = make_dataloaders(config)
     train_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
+    train_pool_fingerprint_sha256 = verify_train_pool_fingerprint(
+        run_dir, epoch, train_sampler, device
+    )
     gaussian_sampler = GaussianNoiseSampler(
         image_shape=train_sampler.image_shape,
         device=device,
@@ -153,6 +207,7 @@ def evaluate_run_epoch(
         "batches": int(args.batches),
         "batch_size": int(args.batch_size),
         "train_pool_seed": config["noise"].get("pool_seed", ""),
+        "train_pool_fingerprint_sha256": train_pool_fingerprint_sha256,
         "heldout_pool_seed": heldout_seed,
         "noise_mode": info.mode,
         "train_noise_loss": format_float(train_loss),

@@ -22,6 +22,20 @@ from .utils import generator_for, resolve_device, seed_everything
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 
 
+def _parse_run_metadata(run_name: str) -> tuple[str, int | None]:
+    match = RUN_RE.match(run_name)
+    if match:
+        return match.group("condition"), int(match.group("seed"))
+    return run_name, None
+
+
+def _evaluation_seed(
+    base_seed: int, run_seed: int | None, epoch: int, *, offset: int = 0
+) -> int:
+    seed_component = 0 if run_seed is None else int(run_seed)
+    return int(base_seed) + int(offset) + seed_component * 1000 + int(epoch)
+
+
 def _prepare_config(
     config: dict[str, Any],
     sample_count: int,
@@ -144,10 +158,8 @@ def evaluate_run_epoch(
     from torchmetrics.image.kid import KernelInceptionDistance
 
     device = resolve_device(args.device)
-    match = RUN_RE.match(run_dir.name)
-    condition = match.group("condition") if match else run_dir.name
-    seed = int(match.group("seed")) if match else -1
-    seed_everything(args.seed + seed * 1000 + epoch)
+    condition, run_seed = _parse_run_metadata(run_dir.name)
+    seed_everything(_evaluation_seed(args.seed, run_seed, epoch))
 
     start = time.perf_counter()
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
@@ -188,7 +200,7 @@ def evaluate_run_epoch(
         sample_batch_size=args.sample_batch_size,
         sample_steps=args.sample_steps,
         sampler=args.sampler,
-        seed=args.seed + 50_000 + seed * 1000 + epoch,
+        seed=_evaluation_seed(args.seed, run_seed, epoch, offset=50_000),
         grid_count=args.grid_count,
         grid_path=grid_path,
     )
@@ -197,7 +209,7 @@ def evaluate_run_epoch(
     return {
         "run_name": run_dir.name,
         "condition": condition,
-        "seed": seed,
+        "seed": run_seed if run_seed is not None else -1,
         "epoch": epoch,
         "step": step,
         "sample_count": args.sample_count,
