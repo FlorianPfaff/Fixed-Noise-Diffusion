@@ -17,7 +17,12 @@ from .utils import (
     write_csv_rows,
 )
 
-POOL_RE = re.compile(r"(?:fixed_pool|fixed_pool_whitened)_(?P<size>\d+)(?P<unit>k?)$")
+POOL_RE = re.compile(
+    r"(?:fixed_pool|fixed_pool_whitened)_(?P<size>\d+)(?P<unit>k?)$"
+)
+POOLSEED_RE = re.compile(
+    r"poolseed_(?P<size>\d+)(?P<unit>k?)_ps(?P<pool_seed>\d+)$"
+)
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 DATASET_PREFIXES = {
     "cifar10": ("cifar10", "cifar-10"),
@@ -89,13 +94,21 @@ def condition_pool_size(condition: str) -> int | None:
     condition = canonical_condition(condition)
     if condition == "gaussian":
         return None
-    match = POOL_RE.search(condition)
+    match = POOL_RE.search(condition) or POOLSEED_RE.search(condition)
     if match is None:
         return None
     size = int(match.group("size"))
     if match.group("unit") == "k":
         size *= 1000
     return size
+
+
+def condition_pool_seed(condition: str) -> int | None:
+    condition = canonical_condition(condition)
+    match = POOLSEED_RE.search(condition)
+    if match is None:
+        return None
+    return int(match.group("pool_seed"))
 
 
 def find_quality_csvs(paths: list[Path]) -> list[Path]:
@@ -137,6 +150,10 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
                 row["kind"] = condition_kind(condition)
                 pool_size = condition_pool_size(condition)
                 row["pool_size"] = "" if pool_size is None else str(pool_size)
+                pool_seed = condition_pool_seed(condition)
+                row["pool_seed"] = (
+                    str(pool_seed) if pool_seed is not None else row.get("pool_seed", "")
+                )
                 rows.append(row)
     return sorted(
         rows,
@@ -145,6 +162,7 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
             row["kind"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
+            int(row.get("pool_seed") or -1),
             int(row.get("seed") or -1),
             int(row.get("epoch") or -1),
         ),
@@ -152,12 +170,21 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
 
 
 def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str], list[dict[str, str]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        grouped[(row.get("dataset", ""), row["kind"], row["condition"], row["pool_size"], row["epoch"])].append(row)
+        grouped[
+            (
+                row.get("dataset", ""),
+                row["kind"],
+                row["condition"],
+                row["pool_size"],
+                row.get("pool_seed", ""),
+                row["epoch"],
+            )
+        ].append(row)
 
     summary: list[dict[str, str]] = []
-    for (dataset, kind, condition, pool_size, epoch), group in grouped.items():
+    for (dataset, kind, condition, pool_size, pool_seed, epoch), group in grouped.items():
         fids = [float_or_nan(row.get("fid")) for row in group]
         kids = [float_or_nan(row.get("kid_mean")) for row in group]
         seconds = [float_or_nan(row.get("seconds")) for row in group]
@@ -167,6 +194,7 @@ def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
                 "kind": kind,
                 "condition": condition,
                 "pool_size": pool_size,
+                "pool_seed": pool_seed,
                 "epoch": epoch,
                 "n": str(len(group)),
                 "fid_mean": format_float(sample_mean(fids)),
@@ -183,6 +211,7 @@ def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             row["kind"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
+            int(row.get("pool_seed") or -1),
             int(row.get("epoch") or -1),
         ),
     )
@@ -239,7 +268,58 @@ def _std_or_zero(row: dict[str, str]) -> float:
     return 0.0 if math.isnan(fid_std) else fid_std
 
 
+def _summary_datasets(summary: list[dict[str, str]]) -> set[str]:
+    return {normalize_dataset_label(row.get("dataset")) for row in summary}
+
+
+def _dataset_slug(dataset: str) -> str:
+    slug = re.sub(r"[^a-z0-9_.-]+", "_", normalize_dataset_label(dataset))
+    return slug.strip("_") or "unknown_dataset"
+
+
+def _single_dataset_title(summary: list[dict[str, str]]) -> str:
+    datasets = sorted(dataset for dataset in _summary_datasets(summary) if dataset)
+    return datasets[0] if len(datasets) == 1 else ""
+
+
+def _assert_single_dataset(summary: list[dict[str, str]], output: Path) -> None:
+    datasets = sorted(_summary_datasets(summary))
+    if len(datasets) <= 1:
+        return
+    label = ", ".join(dataset or "<unknown>" for dataset in datasets)
+    raise ValueError(
+        f"Refusing to write mixed-dataset figure {output}: {label}. "
+        "Use write_quality_plots() to facet by dataset."
+    )
+
+
+def _group_summary_by_dataset(
+    summary: list[dict[str, str]],
+) -> list[tuple[str, list[dict[str, str]]]]:
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in summary:
+        grouped[normalize_dataset_label(row.get("dataset"))].append(row)
+    return sorted(grouped.items(), key=lambda item: (item[0] == "", item[0]))
+
+
+def write_quality_plots(
+    summary: list[dict[str, str]], output_dir: Path, prefix: str
+) -> None:
+    dataset_groups = _group_summary_by_dataset(summary)
+    if len(dataset_groups) == 1:
+        dataset_summary = dataset_groups[0][1]
+        plot_fid_by_pool(dataset_summary, output_dir / f"{prefix}_fid_by_pool_size.png")
+        plot_fid_vs_gap(dataset_summary, output_dir / f"{prefix}_fid_vs_gap.png")
+        return
+
+    for dataset, dataset_summary in dataset_groups:
+        suffix = _dataset_slug(dataset)
+        plot_fid_by_pool(dataset_summary, output_dir / f"{prefix}_{suffix}_fid_by_pool_size.png")
+        plot_fid_vs_gap(dataset_summary, output_dir / f"{prefix}_{suffix}_fid_vs_gap.png")
+
+
 def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
+    _assert_single_dataset(summary, output)
     fixed = [
         row
         for row in summary
@@ -288,7 +368,9 @@ def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
     axis.set_xscale("log")
     axis.set_xlabel("Pool size M")
     axis.set_ylabel("FID")
-    axis.set_title(f"Sample quality at epoch {final_epoch}")
+    dataset_title = _single_dataset_title(summary)
+    title_prefix = f"{dataset_title} " if dataset_title else ""
+    axis.set_title(f"{title_prefix}Sample quality at epoch {final_epoch}")
     axis.grid(True, which="both", alpha=0.25)
     axis.legend(frameon=False)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +379,7 @@ def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
 
 
 def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
+    _assert_single_dataset(summary, output)
     rows = [
         row
         for row in summary
@@ -341,7 +424,9 @@ def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
             )
     axis.set_xlabel("Denoising gap")
     axis.set_ylabel("FID")
-    axis.set_title(f"Gap vs sample quality at epoch {final_epoch}")
+    dataset_title = _single_dataset_title(summary)
+    title_prefix = f"{dataset_title} " if dataset_title else ""
+    axis.set_title(f"{title_prefix}Gap vs sample quality at epoch {final_epoch}")
     axis.grid(True, alpha=0.25)
     axis.legend(frameon=False)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -386,8 +471,7 @@ def main() -> None:
         write_csv(output_dir / f"{args.prefix}_summary_with_gap.csv", summary)
 
     if not args.no_plots:
-        plot_fid_by_pool(summary, output_dir / f"{args.prefix}_fid_by_pool_size.png")
-        plot_fid_vs_gap(summary, output_dir / f"{args.prefix}_fid_vs_gap.png")
+        write_quality_plots(summary, output_dir, args.prefix)
 
 
 if __name__ == "__main__":

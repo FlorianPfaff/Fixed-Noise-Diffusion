@@ -15,6 +15,34 @@ from .utils import generator_for
 
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
 
+SUPPORTED_FID_FEATURES = frozenset({64, 192, 768, 2048})
+
+
+def fid_metric_name(fid_feature: int) -> str:
+    return f"fid{int(fid_feature)}"
+
+
+def empty_fid_kid_metrics(fid_feature: int) -> dict[str, float | int | str | None]:
+    fid_feature = int(fid_feature)
+    metric_name = fid_metric_name(fid_feature)
+    return {
+        metric_name: None,
+        "fid_feature": fid_feature,
+        "fid_metric_name": metric_name,
+        "kid_mean": None,
+        "kid_std": None,
+    }
+
+
+def _validate_fid_feature(fid_feature: int) -> int:
+    fid_feature = int(fid_feature)
+    if fid_feature not in SUPPORTED_FID_FEATURES:
+        supported = ", ".join(str(value) for value in sorted(SUPPORTED_FID_FEATURES))
+        raise ValueError(
+            f"evaluation.fid_feature must be one of {supported}; got {fid_feature}"
+        )
+    return fid_feature
+
 
 @torch.no_grad()
 def denoising_loss_from_timesteps(
@@ -129,18 +157,22 @@ def optional_fid_kid(
     real_images: torch.Tensor,
     fake_images: torch.Tensor,
     device: torch.device,
-) -> dict[str, float | None]:
+    fid_feature: int = 64,
+) -> dict[str, float | int | str | None]:
+    fid_feature = _validate_fid_feature(fid_feature)
+    metrics = empty_fid_kid_metrics(fid_feature)
+    metric_name = fid_metric_name(fid_feature)
     if fake_images.numel() == 0:
-        return {"fid": None, "kid_mean": None, "kid_std": None}
+        return metrics
     try:
         from torchmetrics.image.fid import FrechetInceptionDistance
         from torchmetrics.image.kid import KernelInceptionDistance
     except Exception:
-        return {"fid": None, "kid_mean": None, "kid_std": None}
+        return metrics
 
     real_uint8 = _to_uint8(real_images).to(device)
     fake_uint8 = _to_uint8(fake_images).to(device)
-    fid = FrechetInceptionDistance(feature=64, normalize=False).to(device)
+    fid = FrechetInceptionDistance(feature=fid_feature, normalize=False).to(device)
     fid.update(real_uint8, real=True)
     fid.update(fake_uint8, real=False)
 
@@ -150,16 +182,46 @@ def optional_fid_kid(
     kid.update(real_uint8, real=True)
     kid.update(fake_uint8, real=False)
     kid_mean, kid_std = kid.compute()
-    return {
-        "fid": float(fid.compute().item()),
-        "kid_mean": float(kid_mean.item()),
-        "kid_std": float(kid_std.item()),
-    }
+    metrics[metric_name] = float(fid.compute().item())
+    metrics["kid_mean"] = float(kid_mean.item())
+    metrics["kid_std"] = float(kid_std.item())
+    return metrics
 
 
 @torch.no_grad()
 def first_real_batch(
     loader: DataLoader, device: torch.device, count: int
 ) -> torch.Tensor:
-    images, _ = next(iter(loader))
-    return images[:count].to(device, non_blocking=True)
+    """Return exactly ``count`` real images from the loader.
+
+    Training-time FID/KID uses this helper to match the number of real images
+    to the number of generated samples. A single validation batch can be
+    smaller than ``count``; silently returning that shorter batch biases the
+    resulting feature statistics.
+    """
+    count = int(count)
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    if count == 0:
+        return torch.empty(0, device=device)
+
+    real_batches = []
+    total_count = 0
+    for images, _ in loader:
+        remaining = count - total_count
+        if remaining <= 0:
+            break
+        images = images[:remaining].to(device, non_blocking=True)
+        real_batches.append(images)
+        total_count += int(images.shape[0])
+        if total_count >= count:
+            break
+
+    if total_count == 0:
+        raise ValueError("Validation loader produced no batches")
+    if total_count < count:
+        raise ValueError(
+            f"Requested {count} real images for sample-quality metrics, "
+            f"but the loader only produced {total_count}"
+        )
+    return torch.cat(real_batches, dim=0)

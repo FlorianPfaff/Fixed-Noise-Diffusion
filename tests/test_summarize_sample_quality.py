@@ -4,10 +4,12 @@ from fixed_noise_diffusion.summarize_sample_quality import (
     canonical_condition,
     condition_kind,
     condition_pool_size,
+    condition_pool_seed,
     merge_gap_summary,
     read_gap_rows,
     read_quality_rows,
     summarize_quality,
+    write_quality_plots,
 )
 
 
@@ -29,6 +31,10 @@ def test_condition_parsing():
     assert canonical_condition("cifar10_fixed_pool_1k") == "fixed_pool_1k"
     assert condition_kind("stl10_gaussian") == "gaussian"
     assert condition_pool_size("celeba64_fixed_pool_10k") == 10_000
+    assert condition_kind("cifar10_poolseed_10000_ps111") == "fixed_pool"
+    assert condition_pool_size("cifar10_poolseed_10000_ps111") == 10_000
+    assert condition_pool_seed("cifar10_poolseed_10000_ps111") == 111
+    assert condition_pool_seed("fixed_pool_10k") is None
 
 
 def test_summarize_quality_groups_by_condition_and_epoch(tmp_path):
@@ -69,6 +75,47 @@ def test_summarize_quality_groups_by_condition_and_epoch(tmp_path):
     assert summary[0]["n"] == "2"
     assert summary[0]["fid_mean"] == "12"
     assert summary[0]["kid_mean_mean"] == "0.2"
+
+
+def test_poolseed_run_names_preserve_pool_size_and_pool_seed(tmp_path):
+    quality_path = tmp_path / "quality" / "sample_quality.csv"
+    quality_path.parent.mkdir()
+    _write_csv(
+        quality_path,
+        [
+            {
+                "run_name": "wp2_100ep_cifar10_poolseed_10000_ps111_seed0",
+                "condition": "cifar10_poolseed_10000_ps111",
+                "seed": "0",
+                "epoch": "100",
+                "fid": "10",
+                "kid_mean": "0.1",
+                "seconds": "3",
+            },
+            {
+                "run_name": "wp2_100ep_cifar10_poolseed_10000_ps111_seed1",
+                "condition": "cifar10_poolseed_10000_ps111",
+                "seed": "1",
+                "epoch": "100",
+                "fid": "14",
+                "kid_mean": "0.3",
+                "seconds": "5",
+            },
+        ],
+    )
+
+    rows = read_quality_rows([quality_path])
+    summary = summarize_quality(rows)
+
+    assert rows[0]["dataset"] == "cifar10"
+    assert rows[0]["condition"] == "poolseed_10000_ps111"
+    assert rows[0]["kind"] == "fixed_pool"
+    assert rows[0]["pool_size"] == "10000"
+    assert rows[0]["pool_seed"] == "111"
+    assert len(summary) == 1
+    assert summary[0]["pool_size"] == "10000"
+    assert summary[0]["pool_seed"] == "111"
+    assert summary[0]["n"] == "2"
 
 
 def test_gap_summary_column_variants_are_merged(tmp_path):
@@ -207,3 +254,57 @@ def test_gap_merge_requires_matching_epoch(tmp_path):
     )
 
     assert merged[0]["denoising_gap_mean"] == "0.12"
+
+
+def test_quality_plots_are_faceted_by_dataset(tmp_path):
+    summary = [
+        {
+            "dataset": "cifar10",
+            "kind": "fixed_pool",
+            "condition": "fixed_pool_1k",
+            "pool_size": "1000",
+            "epoch": "50",
+            "fid_mean": "10",
+            "fid_std": "1",
+            "denoising_gap_mean": "0.1",
+        },
+        {
+            "dataset": "cifar10",
+            "kind": "gaussian",
+            "condition": "gaussian",
+            "pool_size": "",
+            "epoch": "50",
+            "fid_mean": "12",
+            "fid_std": "0.5",
+            "denoising_gap_mean": "0.0",
+        },
+        {
+            "dataset": "stl10",
+            "kind": "fixed_pool",
+            "condition": "fixed_pool_1k",
+            "pool_size": "1000",
+            "epoch": "50",
+            "fid_mean": "20",
+            "fid_std": "1",
+            "denoising_gap_mean": "0.2",
+        },
+        {
+            "dataset": "stl10",
+            "kind": "gaussian",
+            "condition": "gaussian",
+            "pool_size": "",
+            "epoch": "50",
+            "fid_mean": "22",
+            "fid_std": "0.5",
+            "denoising_gap_mean": "0.0",
+        },
+    ]
+
+    write_quality_plots(summary, tmp_path, "sample_quality")
+
+    assert (tmp_path / "sample_quality_cifar10_fid_by_pool_size.png").is_file()
+    assert (tmp_path / "sample_quality_cifar10_fid_vs_gap.png").is_file()
+    assert (tmp_path / "sample_quality_stl10_fid_by_pool_size.png").is_file()
+    assert (tmp_path / "sample_quality_stl10_fid_vs_gap.png").is_file()
+    assert not (tmp_path / "sample_quality_fid_by_pool_size.png").exists()
+    assert not (tmp_path / "sample_quality_fid_vs_gap.png").exists()

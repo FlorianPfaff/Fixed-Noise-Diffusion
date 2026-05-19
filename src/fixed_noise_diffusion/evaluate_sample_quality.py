@@ -11,7 +11,6 @@ from typing import Any
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
 
 from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
@@ -20,6 +19,61 @@ from .evaluate import _to_uint8
 from .utils import generator_for, resolve_device, seed_everything
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
+
+PAPER_SAMPLE_COUNT = 10_000
+PAPER_FID_FEATURE = 2048
+PAPER_KID_SUBSET_SIZE = 1000
+
+QUICK_SAMPLE_COUNT = 2048
+QUICK_FID_FEATURE = 64
+QUICK_KID_SUBSET_SIZE = 100
+
+METRIC_PRESETS: dict[str, dict[str, int]] = {
+    "paper": {
+        "sample_count": PAPER_SAMPLE_COUNT,
+        "fid_feature": PAPER_FID_FEATURE,
+        "kid_subset_size": PAPER_KID_SUBSET_SIZE,
+    },
+    "quick": {
+        "sample_count": QUICK_SAMPLE_COUNT,
+        "fid_feature": QUICK_FID_FEATURE,
+        "kid_subset_size": QUICK_KID_SUBSET_SIZE,
+    },
+}
+
+
+def _resolve_metric_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    for name, value in METRIC_PRESETS[args.metric_preset].items():
+        if getattr(args, name) is None:
+            setattr(args, name, value)
+    return args
+
+
+def _run_name_metadata(run_dir: Path) -> tuple[str, int | None]:
+    match = RUN_RE.match(run_dir.name)
+    if not match:
+        return run_dir.name, None
+    return match.group("condition"), int(match.group("seed"))
+
+
+def _resolve_run_metadata(run_dir: Path, config: dict[str, Any]) -> tuple[str, int]:
+    condition, directory_seed = _run_name_metadata(run_dir)
+    raw_seed = config.get("seed")
+    if raw_seed is not None:
+        try:
+            seed = int(raw_seed)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Checkpoint config field 'seed' must be an integer-compatible value"
+            ) from exc
+    elif directory_seed is not None:
+        seed = directory_seed
+    else:
+        seed = 0
+
+    if seed < 0:
+        raise ValueError(f"Checkpoint/run seed must be non-negative, got {seed}")
+    return condition, seed
 
 
 def _prepare_config(
@@ -128,6 +182,8 @@ def _generate_fake_metrics(
         generated += int(batch_size)
 
     if grid_samples:
+        from torchvision.utils import save_image
+
         grid_path.parent.mkdir(parents=True, exist_ok=True)
         grid = torch.stack(grid_samples).add(1).mul(0.5).clamp(0, 1)
         save_image(grid, grid_path, nrow=max(1, int(len(grid_samples) ** 0.5)))
@@ -144,13 +200,10 @@ def evaluate_run_epoch(
     from torchmetrics.image.kid import KernelInceptionDistance
 
     device = resolve_device(args.device)
-    match = RUN_RE.match(run_dir.name)
-    condition = match.group("condition") if match else run_dir.name
-    seed = int(match.group("seed")) if match else -1
-    seed_everything(args.seed + seed * 1000 + epoch)
-
     start = time.perf_counter()
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
+    condition, seed = _resolve_run_metadata(run_dir, config)
+    seed_everything(args.seed + seed * 1000 + epoch)
     config = _prepare_config(
         config,
         sample_count=args.sample_count,
@@ -200,6 +253,7 @@ def evaluate_run_epoch(
         "seed": seed,
         "epoch": epoch,
         "step": step,
+        "metric_preset": args.metric_preset,
         "sample_count": args.sample_count,
         "requested_real_count": requested_real_count,
         "real_split": args.real_split,
@@ -247,7 +301,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run", action="append", default=[], help="Run directory name")
     parser.add_argument("--epochs", default="1,5,10,25,50")
-    parser.add_argument("--sample-count", type=int, default=2048)
+    parser.add_argument(
+        "--metric-preset",
+        choices=sorted(METRIC_PRESETS),
+        default="paper",
+        help=(
+            "Default metric settings to use when --sample-count, --fid-feature, "
+            "or --kid-subset-size are not supplied."
+        ),
+    )
+    parser.add_argument("--sample-count", type=int, default=None)
     parser.add_argument(
         "--real-count",
         type=int,
@@ -264,11 +327,11 @@ def main() -> None:
     parser.add_argument("--sample-steps", type=int, default=50)
     parser.add_argument("--sampler", choices=["ddim", "ddpm"], default="ddim")
     parser.add_argument("--grid-count", type=int, default=64)
-    parser.add_argument("--fid-feature", type=int, default=64)
-    parser.add_argument("--kid-subset-size", type=int, default=100)
+    parser.add_argument("--fid-feature", type=int, default=None)
+    parser.add_argument("--kid-subset-size", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
-    args = parser.parse_args()
+    args = _resolve_metric_defaults(parser.parse_args())
 
     sweep_dir = args.sweep_dir.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()

@@ -12,7 +12,13 @@ from tqdm import tqdm
 from .config import add_config_args, load_config, save_config
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
-from .evaluate import denoising_loss, first_real_batch, optional_fid_kid, sample_grid
+from .evaluate import (
+    denoising_loss,
+    empty_fid_kid_metrics,
+    first_real_batch,
+    optional_fid_kid,
+    sample_grid,
+)
 from .integrity import build_run_metadata, build_run_summary, write_json
 from .logging_utils import MetricLogger
 from .model import build_model
@@ -185,10 +191,11 @@ def evaluate_checkpoint(
         samples_path,
         seed + 50_000 + epoch,
     )
-    metrics = {"fid": None, "kid_mean": None, "kid_std": None}
+    fid_feature = int(eval_cfg.get("fid_feature", 64))
+    metrics = empty_fid_kid_metrics(fid_feature)
     if bool(eval_cfg.get("enable_metrics", False)) and samples.numel() > 0:
         real = first_real_batch(loaders.val, device, samples.shape[0])
-        metrics = optional_fid_kid(real, samples, device)
+        metrics = optional_fid_kid(real, samples, device, fid_feature=fid_feature)
 
     info = train_noise_sampler.info
     record = {
