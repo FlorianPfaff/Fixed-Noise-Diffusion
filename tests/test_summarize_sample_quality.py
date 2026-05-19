@@ -160,6 +160,7 @@ def test_gap_summary_column_variants_are_merged(tmp_path):
     )
 
     assert merged[0]["denoising_gap_mean"] == "0.12"
+    assert merged[0]["denoising_gap_std"] == "0.03"
 
 
 def test_fid_by_pool_plot_keeps_single_dataset_output_name(tmp_path):
@@ -194,7 +195,7 @@ def test_fid_by_pool_plot_keeps_single_dataset_output_name(tmp_path):
     assert not (tmp_path / "fid_by_pool_cifar10.png").exists()
 
 
-def test_fid_by_pool_plot_splits_multiple_datasets(tmp_path):
+def test_fid_by_pool_plot_handles_multiple_datasets_in_one_output(tmp_path):
     output = tmp_path / "fid_by_pool.png"
     plot_fid_by_pool(
         [
@@ -242,12 +243,12 @@ def test_fid_by_pool_plot_splits_multiple_datasets(tmp_path):
         output,
     )
 
-    assert not output.exists()
-    assert (tmp_path / "fid_by_pool_cifar10.png").is_file()
-    assert (tmp_path / "fid_by_pool_stl10.png").is_file()
+    assert output.is_file()
+    assert not (tmp_path / "fid_by_pool_cifar10.png").exists()
+    assert not (tmp_path / "fid_by_pool_stl10.png").exists()
 
 
-def test_fid_vs_gap_plot_splits_multiple_datasets(tmp_path):
+def test_fid_vs_gap_plot_handles_multiple_datasets_in_one_output(tmp_path):
     output = tmp_path / "fid_vs_gap.png"
     plot_fid_vs_gap(
         [
@@ -299,10 +300,9 @@ def test_fid_vs_gap_plot_splits_multiple_datasets(tmp_path):
         output,
     )
 
-    assert not output.exists()
-    assert (tmp_path / "fid_vs_gap_cifar10.png").is_file()
-    assert (tmp_path / "fid_vs_gap_stl10.png").is_file()
-    assert merged[0]["denoising_gap_std"] == "0.03"
+    assert output.is_file()
+    assert not (tmp_path / "fid_vs_gap_cifar10.png").exists()
+    assert not (tmp_path / "fid_vs_gap_stl10.png").exists()
 
 
 def test_dataset_prefixed_quality_conditions_join_canonical_gap_rows(tmp_path):

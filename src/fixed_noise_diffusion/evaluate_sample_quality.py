@@ -48,7 +48,6 @@ def _prepare_config(
 ) -> dict[str, Any]:
     data_cfg = config["data"]
     eval_cfg = config["evaluation"]
-    data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(sample_batch_size)
     if real_split == "val":
         if data_cfg.get("eval_subset_size") is None:

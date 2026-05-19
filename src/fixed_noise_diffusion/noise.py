@@ -16,8 +16,32 @@ DTYPES = {
 }
 
 
-def _parse_pool_dtype(dtype: str) -> torch.dtype:
-    dtype_name = str(dtype)
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from None
+    if parsed <= 0 or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
+def _validate_image_shape(image_shape: tuple[int, int, int]) -> tuple[int, int, int]:
+    try:
+        shape = tuple(int(dim) for dim in image_shape)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "image_shape must be a 3-tuple of positive integers"
+        ) from None
+    if len(shape) != 3 or any(dim <= 0 for dim in shape):
+        raise ValueError("image_shape must be a 3-tuple of positive integers")
+    return shape
+
+
+def _parse_pool_dtype(dtype: str | torch.dtype) -> torch.dtype:
+    dtype_name = str(dtype).removeprefix("torch.").lower()
     try:
         return DTYPES[dtype_name]
     except KeyError as exc:
@@ -25,6 +49,24 @@ def _parse_pool_dtype(dtype: str) -> torch.dtype:
         raise ValueError(
             f"Unsupported noise.pool_dtype {dtype_name!r}; expected one of: {supported}"
         ) from exc
+
+
+def _validate_existing_pool(
+    existing_pool: torch.Tensor,
+    pool_size: int,
+    image_shape: tuple[int, int, int],
+) -> torch.Tensor:
+    if not isinstance(existing_pool, torch.Tensor):
+        raise ValueError("existing_pool must be a torch.Tensor")
+    expected_shape = (pool_size, *image_shape)
+    if tuple(existing_pool.shape) != expected_shape:
+        raise ValueError(
+            f"existing_pool must have shape {expected_shape}, "
+            f"got {tuple(existing_pool.shape)}"
+        )
+    if existing_pool.device.type != "cpu":
+        raise ValueError("existing_pool must be CPU-backed")
+    return existing_pool
 
 
 @dataclass(frozen=True)
@@ -70,13 +112,13 @@ class FixedPoolNoiseSampler:
         whiten: bool = False,
         existing_pool: torch.Tensor | None = None,
     ) -> None:
-        self.image_shape = image_shape
+        self.image_shape = _validate_image_shape(image_shape)
         self.device = device
-        self.pool_size = int(pool_size)
+        self.pool_size = _positive_int("pool_size", pool_size)
         self.pool_seed = int(pool_seed)
         self.index_seed = int(index_seed)
         self.dtype = _parse_pool_dtype(dtype)
-        self.chunk_size = int(chunk_size)
+        self.chunk_size = _positive_int("chunk_size", chunk_size)
         self.whiten = bool(whiten)
         self.index_generator = torch.Generator(device="cpu")
         self.index_generator.manual_seed(self.index_seed)
@@ -84,7 +126,9 @@ class FixedPoolNoiseSampler:
         if existing_pool is None:
             self.pool = self._build_pool()
         else:
-            self.pool = existing_pool
+            self.pool = _validate_existing_pool(
+                existing_pool, self.pool_size, self.image_shape
+            )
         pool_memory_mb = self.pool.numel() * self.pool.element_size() / (1024**2)
         mode = "fixed_pool_whitened" if self.whiten else "fixed_pool"
         self.info = NoiseInfo(mode, self.pool_size, pool_memory_mb, self.whiten)
@@ -228,11 +272,11 @@ def make_noise_sampler(
         return FixedPoolNoiseSampler(
             image_shape=image_shape,
             device=device,
-            pool_size=int(noise_cfg["pool_size"]),
+            pool_size=noise_cfg["pool_size"],
             pool_seed=int(noise_cfg["pool_seed"]),
             index_seed=seed,
             dtype=str(noise_cfg.get("pool_dtype", "float16")),
-            chunk_size=int(noise_cfg.get("pool_chunk_size", 8192)),
+            chunk_size=noise_cfg.get("pool_chunk_size", 8192),
             whiten=whiten,
         )
     raise ValueError(f"Unsupported noise mode {mode!r}")

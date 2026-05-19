@@ -41,7 +41,6 @@ def _prepare_config(
 ) -> dict[str, Any]:
     config = deepcopy(config)
     data_cfg = config["data"]
-    data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(batch_size)
     data_cfg["num_workers"] = int(num_workers)
     if data_dir is not None:

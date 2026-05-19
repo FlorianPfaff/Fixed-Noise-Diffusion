@@ -64,6 +64,56 @@ def test_fixed_pool_rejects_unknown_pool_dtype():
         )
 
 
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"pool_size": 0}, "pool_size must be a positive integer"),
+        ({"pool_size": -1}, "pool_size must be a positive integer"),
+        ({"pool_size": 1.5}, "pool_size must be a positive integer"),
+        ({"chunk_size": 0}, "chunk_size must be a positive integer"),
+        ({"chunk_size": -1}, "chunk_size must be a positive integer"),
+        (
+            {"image_shape": (3, 0, 4)},
+            "image_shape must be a 3-tuple of positive integers",
+        ),
+        (
+            {"image_shape": (3, 4)},
+            "image_shape must be a 3-tuple of positive integers",
+        ),
+    ],
+)
+def test_fixed_pool_rejects_invalid_configuration(overrides, match):
+    kwargs = {
+        "image_shape": (3, 4, 4),
+        "device": torch.device("cpu"),
+        "pool_size": 8,
+        "pool_seed": 1,
+        "index_seed": 2,
+        "dtype": "float32",
+        "chunk_size": 4,
+        "whiten": False,
+    }
+    kwargs.update(overrides)
+
+    with pytest.raises(ValueError, match=match):
+        FixedPoolNoiseSampler(**kwargs)
+
+
+def test_fixed_pool_rejects_mismatched_existing_pool_shape():
+    with pytest.raises(ValueError, match="existing_pool must have shape"):
+        FixedPoolNoiseSampler(
+            image_shape=(3, 4, 4),
+            device=torch.device("cpu"),
+            pool_size=8,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=4,
+            whiten=False,
+            existing_pool=torch.empty((7, 3, 4, 4)),
+        )
+
+
 def test_fixed_pool_fingerprint_is_stable_and_detects_pool_seed():
     sampler_a = FixedPoolNoiseSampler(
         image_shape=(3, 4, 4),
