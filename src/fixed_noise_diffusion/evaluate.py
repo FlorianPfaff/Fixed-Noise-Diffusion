@@ -130,7 +130,7 @@ def optional_fid_kid(
     fake_images: torch.Tensor,
     device: torch.device,
 ) -> dict[str, float | None]:
-    if fake_images.numel() == 0:
+    if real_images.numel() == 0 or fake_images.numel() == 0:
         return {"fid": None, "kid_mean": None, "kid_std": None}
     try:
         from torchmetrics.image.fid import FrechetInceptionDistance
@@ -144,9 +144,8 @@ def optional_fid_kid(
     fid.update(real_uint8, real=True)
     fid.update(fake_uint8, real=False)
 
-    kid = KernelInceptionDistance(
-        subset_size=min(50, fake_uint8.shape[0]), normalize=False
-    ).to(device)
+    kid_subset_size = min(50, int(real_uint8.shape[0]), int(fake_uint8.shape[0]))
+    kid = KernelInceptionDistance(subset_size=kid_subset_size, normalize=False).to(device)
     kid.update(real_uint8, real=True)
     kid.update(fake_uint8, real=False)
     kid_mean, kid_std = kid.compute()
@@ -161,5 +160,19 @@ def optional_fid_kid(
 def first_real_batch(
     loader: DataLoader, device: torch.device, count: int
 ) -> torch.Tensor:
-    images, _ = next(iter(loader))
-    return images[:count].to(device, non_blocking=True)
+    if count <= 0:
+        return torch.empty(0, device=device)
+
+    batches: list[torch.Tensor] = []
+    total_count = 0
+    for images, _ in loader:
+        remaining = count - total_count
+        if remaining <= 0:
+            break
+        selected = images[:remaining].to(device, non_blocking=True)
+        batches.append(selected)
+        total_count += int(selected.shape[0])
+
+    if not batches:
+        raise ValueError("Validation loader produced no batches")
+    return torch.cat(batches, dim=0)

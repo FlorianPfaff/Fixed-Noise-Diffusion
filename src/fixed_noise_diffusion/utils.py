@@ -26,9 +26,10 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
 
 
 def resolve_device(requested: str) -> torch.device:
-    if requested == "cuda" and not torch.cuda.is_available():
+    device = torch.device(requested)
+    if device.type == "cuda" and not torch.cuda.is_available():
         return torch.device("cpu")
-    return torch.device(requested)
+    return device
 
 
 def _directory_preview(path: Path, max_entries: int = 8) -> str:
@@ -69,7 +70,7 @@ def count_parameters(model: torch.nn.Module) -> int:
 
 def generator_for(device: torch.device | str, seed: int) -> torch.Generator:
     device = torch.device(device)
-    generator_device = "cuda" if device.type == "cuda" else "cpu"
+    generator_device = str(device) if device.type == "cuda" else "cpu"
     generator = torch.Generator(device=generator_device)
     generator.manual_seed(int(seed))
     return generator

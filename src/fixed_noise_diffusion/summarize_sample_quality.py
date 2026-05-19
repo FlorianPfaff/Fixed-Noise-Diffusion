@@ -24,6 +24,25 @@ DATASET_PREFIXES = {
     "stl10": ("stl10", "stl-10"),
     "celeba64": ("celeba64", "celeba-64", "celeba"),
 }
+QUALITY_PROTOCOL_COLUMNS = (
+    "sample_count",
+    "requested_real_count",
+    "real_count",
+    "fake_count",
+    "real_split",
+    "sample_steps",
+    "sampler",
+    "fid_feature",
+    "kid_subset_size",
+)
+
+
+def _quality_protocol_key(row: dict[str, str]) -> tuple[str, ...]:
+    values: list[str] = []
+    for column in QUALITY_PROTOCOL_COLUMNS:
+        value = row.get(column, "")
+        values.append("" if value is None else str(value))
+    return tuple(values)
 
 
 def normalize_dataset_label(dataset: str | None) -> str:
@@ -152,12 +171,22 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
 
 
 def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str], list[dict[str, str]]] = defaultdict(list)
+    grouped: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        grouped[(row.get("dataset", ""), row["kind"], row["condition"], row["pool_size"], row["epoch"])].append(row)
+        grouped[
+            (
+                row.get("dataset", ""),
+                row["kind"],
+                row["condition"],
+                row["pool_size"],
+                row["epoch"],
+                *_quality_protocol_key(row),
+            )
+        ].append(row)
 
     summary: list[dict[str, str]] = []
-    for (dataset, kind, condition, pool_size, epoch), group in grouped.items():
+    for group_key, group in grouped.items():
+        dataset, kind, condition, pool_size, epoch, *protocol_values = group_key
         fids = [float_or_nan(row.get("fid")) for row in group]
         kids = [float_or_nan(row.get("kid_mean")) for row in group]
         seconds = [float_or_nan(row.get("seconds")) for row in group]
@@ -168,6 +197,7 @@ def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
                 "condition": condition,
                 "pool_size": pool_size,
                 "epoch": epoch,
+                **dict(zip(QUALITY_PROTOCOL_COLUMNS, protocol_values, strict=True)),
                 "n": str(len(group)),
                 "fid_mean": format_float(sample_mean(fids)),
                 "fid_std": format_float(sample_std(fids)),
@@ -184,6 +214,7 @@ def summarize_quality(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
             int(row.get("epoch") or -1),
+            _quality_protocol_key(row),
         ),
     )
 

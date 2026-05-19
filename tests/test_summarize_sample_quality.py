@@ -73,6 +73,57 @@ def test_summarize_quality_groups_by_condition_and_epoch(tmp_path):
     assert summary[0]["kid_mean_mean"] == "0.2"
 
 
+def test_summarize_quality_keeps_metric_protocols_separate(tmp_path):
+    quality_path = tmp_path / "quality" / "sample_quality.csv"
+    quality_path.parent.mkdir()
+
+    def row(seed, sample_count, fid):
+        return {
+            "run_name": f"wp2_50ep_fixed_pool_1k_seed{seed}",
+            "condition": "fixed_pool_1k",
+            "seed": str(seed),
+            "epoch": "50",
+            "sample_count": str(sample_count),
+            "requested_real_count": str(sample_count),
+            "real_count": str(sample_count),
+            "fake_count": str(sample_count),
+            "real_split": "val",
+            "sample_steps": "50",
+            "sampler": "ddim",
+            "fid_feature": "64",
+            "kid_subset_size": "100",
+            "fid": str(fid),
+            "kid_mean": "0.1",
+            "seconds": "3",
+        }
+
+    _write_csv(
+        quality_path,
+        [
+            row(seed=0, sample_count=2048, fid=10),
+            row(seed=1, sample_count=2048, fid=14),
+            row(seed=2, sample_count=4096, fid=99),
+        ],
+    )
+
+    summary = summarize_quality(read_quality_rows([quality_path.parent]))
+
+    assert len(summary) == 2
+    by_sample_count = {row["sample_count"]: row for row in summary}
+    assert by_sample_count["2048"]["n"] == "2"
+    assert by_sample_count["2048"]["fid_mean"] == "12"
+    assert by_sample_count["2048"]["requested_real_count"] == "2048"
+    assert by_sample_count["2048"]["real_count"] == "2048"
+    assert by_sample_count["2048"]["fake_count"] == "2048"
+    assert by_sample_count["2048"]["real_split"] == "val"
+    assert by_sample_count["2048"]["sample_steps"] == "50"
+    assert by_sample_count["2048"]["sampler"] == "ddim"
+    assert by_sample_count["2048"]["fid_feature"] == "64"
+    assert by_sample_count["2048"]["kid_subset_size"] == "100"
+    assert by_sample_count["4096"]["n"] == "1"
+    assert by_sample_count["4096"]["fid_mean"] == "99"
+
+
 def test_gap_summary_column_variants_are_merged(tmp_path):
     gap_path = tmp_path / "gap.csv"
     _write_csv(

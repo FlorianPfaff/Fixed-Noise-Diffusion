@@ -175,13 +175,14 @@ def evaluate_run_epoch(
     )
 
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
+    kid_subset_size = effective_kid_subset_size(
+        args.kid_subset_size,
+        args.sample_count,
+        args.real_count,
+    )
     kid = KernelInceptionDistance(
         feature=args.fid_feature,
-        subset_size=effective_kid_subset_size(
-            args.kid_subset_size,
-            args.sample_count,
-            args.real_count,
-        ),
+        subset_size=kid_subset_size,
         normalize=False,
     ).to(device)
     requested_real_count = int(args.real_count or args.sample_count)
@@ -225,6 +226,7 @@ def evaluate_run_epoch(
         "sample_steps": args.sample_steps,
         "sampler": args.sampler,
         "fid_feature": args.fid_feature,
+        "kid_subset_size": kid_subset_size,
         "fid": float(fid.compute().item()),
         "kid_mean": float(kid_mean.item()),
         "kid_std": float(kid_std.item()),
