@@ -1,6 +1,11 @@
 from fixed_noise_diffusion.config import load_config
 
 
+def test_default_config_refuses_run_overwrite():
+    config = load_config(None)
+    assert config["overwrite_run"] is False
+
+
 def test_smoke_config_loads():
     config = load_config("smoke.yaml")
     assert config["data"]["dataset"] == "fake"

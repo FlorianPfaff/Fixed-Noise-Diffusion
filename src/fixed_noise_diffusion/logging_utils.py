@@ -35,16 +35,56 @@ CSV_FIELDS = [
 
 
 class MetricLogger:
-    def __init__(self, run_dir: Path) -> None:
+    def __init__(self, run_dir: Path, *, append: bool = False) -> None:
         self.run_dir = run_dir
         self.jsonl_path = run_dir / "metrics.jsonl"
         self.csv_path = run_dir / "metrics.csv"
-        if not self.csv_path.exists():
-            with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(
-                    handle, fieldnames=CSV_FIELDS, extrasaction="ignore"
-                )
-                writer.writeheader()
+
+        if append:
+            if self.csv_path.exists():
+                self._validate_existing_csv_header()
+            else:
+                self._write_csv_header()
+            if not self.jsonl_path.exists():
+                self.jsonl_path.write_text("", encoding="utf-8")
+            return
+
+        existing = [
+            path.name
+            for path in (self.csv_path, self.jsonl_path)
+            if path.exists()
+        ]
+        if existing:
+            names = ", ".join(existing)
+            raise FileExistsError(
+                "Metric files already exist in "
+                f"{run_dir}: {names}. Refusing to append fresh-run metrics "
+                "to existing artifacts because this can contaminate denoising "
+                "gap summaries and paper tables. Use a new run_name/output_dir, "
+                "set overwrite_run=true or pass --overwrite-run to delete the "
+                "old run directory, or construct MetricLogger(..., append=True) "
+                "only for an explicit resume workflow."
+            )
+
+        self._write_csv_header()
+        self.jsonl_path.write_text("", encoding="utf-8")
+
+    def _write_csv_header(self) -> None:
+        with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=CSV_FIELDS, extrasaction="ignore"
+            )
+            writer.writeheader()
+
+    def _validate_existing_csv_header(self) -> None:
+        with self.csv_path.open(newline="", encoding="utf-8") as handle:
+            header = next(csv.reader(handle), None)
+        if header != CSV_FIELDS:
+            raise ValueError(
+                f"Existing metrics.csv in {self.run_dir} has an incompatible "
+                "header. Refusing append mode because mixed metric schemas can "
+                "silently corrupt downstream summaries."
+            )
 
     def log(self, record: dict[str, Any]) -> None:
         clean = {

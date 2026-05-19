@@ -10,6 +10,7 @@ import yaml
 DEFAULT_CONFIG: dict[str, Any] = {
     "run_name": "run",
     "output_dir": "runs",
+    "overwrite_run": False,
     "seed": 0,
     "device": "cuda",
     "data": {

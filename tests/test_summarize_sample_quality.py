@@ -169,6 +169,55 @@ def test_dataset_prefixed_quality_conditions_join_canonical_gap_rows(tmp_path):
     assert by_dataset["stl10"]["denoising_gap_mean"] == "0.45"
 
 
+def test_dataset_prefixed_gap_conditions_without_dataset_column_are_disambiguated(tmp_path):
+    gap_path = tmp_path / "gap.csv"
+    _write_csv(
+        gap_path,
+        [
+            {
+                "condition": "cifar10_fixed_pool_1k",
+                "epoch": "50",
+                "denoising_gap_mean": "0.12",
+                "denoising_gap_std": "0.03",
+            },
+            {
+                "condition": "stl10_fixed_pool_1k",
+                "epoch": "50",
+                "denoising_gap_mean": "0.45",
+                "denoising_gap_std": "0.06",
+            },
+        ],
+    )
+
+    merged = merge_gap_summary(
+        [
+            {
+                "dataset": "cifar10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "10",
+            },
+            {
+                "dataset": "stl10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "20",
+            },
+        ],
+        read_gap_rows([gap_path]),
+    )
+
+    by_dataset = {row["dataset"]: row for row in merged}
+    assert by_dataset["cifar10"]["denoising_gap_mean"] == "0.12"
+    assert by_dataset["stl10"]["denoising_gap_mean"] == "0.45"
+
+
 def test_gap_merge_requires_matching_epoch(tmp_path):
     gap_path = tmp_path / "gap.csv"
     _write_csv(

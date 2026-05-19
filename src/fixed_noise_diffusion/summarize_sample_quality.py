@@ -193,9 +193,10 @@ def read_gap_rows(paths: list[Path]) -> dict[tuple[str, str, str], dict[str, str
     for path in paths:
         with path.expanduser().open("r", newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
-                condition = canonical_condition(row["condition"])
+                raw_condition = row["condition"]
+                condition_dataset, condition = split_dataset_condition(raw_condition)
                 epoch = str(int(row.get("epoch") or 0))
-                dataset = normalize_dataset_label(row.get("dataset"))
+                dataset = normalize_dataset_label(row.get("dataset")) or condition_dataset
                 gap_mean = row.get("denoising_gap_mean", row.get("mean_denoising_gap", ""))
                 gap_std = row.get("denoising_gap_std", row.get("std_denoising_gap", ""))
                 gaps[(dataset, condition, epoch)] = {

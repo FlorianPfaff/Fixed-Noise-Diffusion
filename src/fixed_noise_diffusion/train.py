@@ -400,8 +400,19 @@ def main() -> None:
         description="Train a CIFAR-10 fixed-noise DDPM run."
     )
     add_config_args(parser)
+    parser.add_argument(
+        "--overwrite-run",
+        action="store_true",
+        help=(
+            "Delete output_dir/run_name before training. By default, training "
+            "refuses to reuse a non-empty run directory so metrics, samples, "
+            "checkpoints, and summaries from old and new runs cannot mix."
+        ),
+    )
     args = parser.parse_args()
     config = load_config(args.config, args.set)
+    if args.overwrite_run:
+        config["overwrite_run"] = True
     train(config)
 
 
