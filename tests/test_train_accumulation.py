@@ -3,6 +3,7 @@ import pytest
 from fixed_noise_diffusion.train import (
     _accumulation_group_size,
     _should_finish_accumulation,
+    _require_train_batches,
 )
 
 
@@ -41,3 +42,10 @@ def test_gradient_accumulation_rejects_invalid_inputs():
         _accumulation_group_size(batch_index=1, total_batches=0, grad_accum_steps=1)
     with pytest.raises(ValueError, match="batch_index"):
         _accumulation_group_size(batch_index=2, total_batches=1, grad_accum_steps=1)
+
+
+def test_training_rejects_empty_train_loader():
+    _require_train_batches(1)
+
+    with pytest.raises(ValueError, match="Training loader produced no batches"):
+        _require_train_batches(0)

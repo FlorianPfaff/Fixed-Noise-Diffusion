@@ -75,6 +75,15 @@ def _should_finish_accumulation(
     return batch_index % grad_accum_steps == 0 or batch_index == total_batches
 
 
+def _require_train_batches(total_train_batches: int) -> None:
+    if total_train_batches < 1:
+        raise ValueError(
+            "Training loader produced no batches. Reduce data.batch_size or "
+            "increase the training dataset size/subset_size; drop_last=True "
+            "discards incomplete batches."
+        )
+
+
 def make_evaluation_samplers(
     train_noise_sampler,
     seed: int,
@@ -287,8 +296,7 @@ def train(config: dict[str, Any]) -> Path:
     for epoch in range(1, int(config["training"]["epochs"]) + 1):
         model.train()
         total_train_batches = len(loaders.train)
-        if total_train_batches < 1:
-            continue
+        _require_train_batches(total_train_batches)
         progress = tqdm(loaders.train, desc=f"epoch {epoch}", leave=False)
         optimizer.zero_grad(set_to_none=True)
         for batch_index, (images, _) in enumerate(progress, start=1):

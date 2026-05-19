@@ -130,7 +130,14 @@ def _combined_sort_key(item: dict[str, str]) -> tuple[str, str, str, int, str, i
 
 
 def _summary_sort_key(item: dict[str, str]) -> tuple[str, str, str, int, str, int]:
-    return _combined_sort_key(item)[:-1]
+    return (
+        item["dataset"],
+        item["experiment"],
+        item["family"],
+        _pool_sort_value(item),
+        item["condition"],
+        int(item["epoch"]),
+    )
 
 
 def collect_rows(run_dirs: list[Path], epochs: set[int] | None) -> list[dict[str, str]]:
