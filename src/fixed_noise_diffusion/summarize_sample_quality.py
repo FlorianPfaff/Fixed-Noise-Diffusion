@@ -239,7 +239,64 @@ def _std_or_zero(row: dict[str, str]) -> float:
     return 0.0 if math.isnan(fid_std) else fid_std
 
 
+def _dataset_plot_suffix(dataset: str) -> str:
+    dataset = normalize_dataset_label(dataset)
+    dataset = re.sub(r"[^a-z0-9._-]+", "_", dataset).strip("_")
+    return dataset if dataset else "unknown_dataset"
+
+
+def _dataset_plot_label(dataset: str) -> str:
+    dataset = normalize_dataset_label(dataset)
+    return dataset if dataset else "unknown dataset"
+
+
+def _dataset_plot_output(output: Path, dataset: str) -> Path:
+    return output.with_name(
+        f"{output.stem}_{_dataset_plot_suffix(dataset)}{output.suffix}"
+    )
+
+
+def _split_rows_for_dataset_plots(
+    rows: list[dict[str, str]], output: Path
+) -> list[tuple[list[dict[str, str]], Path, str]]:
+    datasets = sorted({normalize_dataset_label(row.get("dataset")) for row in rows})
+    if len(datasets) <= 1:
+        dataset = datasets[0] if datasets else ""
+        return [(rows, output, dataset)]
+    return [
+        (
+            [
+                row
+                for row in rows
+                if normalize_dataset_label(row.get("dataset")) == dataset
+            ],
+            _dataset_plot_output(output, dataset),
+            dataset,
+        )
+        for dataset in datasets
+    ]
+
+
 def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
+    plot_rows = [
+        row
+        for row in summary
+        if (
+            row["kind"] == "fixed_pool"
+            and row["pool_size"]
+            and row.get("epoch")
+        )
+        or (row["kind"] == "gaussian" and row.get("epoch"))
+    ]
+    for group, group_output, dataset in _split_rows_for_dataset_plots(
+        plot_rows, output
+    ):
+        _plot_fid_by_pool_single(group, group_output, dataset)
+
+
+def _plot_fid_by_pool_single(
+    summary: list[dict[str, str]], output: Path, dataset: str
+) -> None:
     fixed = [
         row
         for row in summary
@@ -288,7 +345,10 @@ def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
     axis.set_xscale("log")
     axis.set_xlabel("Pool size M")
     axis.set_ylabel("FID")
-    axis.set_title(f"Sample quality at epoch {final_epoch}")
+    title = f"Sample quality at epoch {final_epoch}"
+    if dataset:
+        title += f" ({_dataset_plot_label(dataset)})"
+    axis.set_title(title)
     axis.grid(True, which="both", alpha=0.25)
     axis.legend(frameon=False)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +357,21 @@ def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
 
 
 def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
+    plot_rows = [
+        row
+        for row in summary
+        if row.get("denoising_gap_mean", "") != ""
+        and row.get("fid_mean", "") != ""
+    ]
+    for group, group_output, dataset in _split_rows_for_dataset_plots(
+        plot_rows, output
+    ):
+        _plot_fid_vs_gap_single(group, group_output, dataset)
+
+
+def _plot_fid_vs_gap_single(
+    summary: list[dict[str, str]], output: Path, dataset: str
+) -> None:
     rows = [
         row
         for row in summary
@@ -338,10 +413,13 @@ def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
                 xytext=(4, 3),
                 textcoords="offset points",
                 fontsize=7,
-            )
+    )
     axis.set_xlabel("Denoising gap")
     axis.set_ylabel("FID")
-    axis.set_title(f"Gap vs sample quality at epoch {final_epoch}")
+    title = f"Gap vs sample quality at epoch {final_epoch}"
+    if dataset:
+        title += f" ({_dataset_plot_label(dataset)})"
+    axis.set_title(title)
     axis.grid(True, alpha=0.25)
     axis.legend(frameon=False)
     output.parent.mkdir(parents=True, exist_ok=True)

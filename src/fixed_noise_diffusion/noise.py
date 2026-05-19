@@ -16,6 +16,17 @@ DTYPES = {
 }
 
 
+def _parse_pool_dtype(dtype: str) -> torch.dtype:
+    dtype_name = str(dtype)
+    try:
+        return DTYPES[dtype_name]
+    except KeyError as exc:
+        supported = ", ".join(sorted(DTYPES))
+        raise ValueError(
+            f"Unsupported noise.pool_dtype {dtype_name!r}; expected one of: {supported}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class NoiseInfo:
     mode: str
@@ -64,7 +75,7 @@ class FixedPoolNoiseSampler:
         self.pool_size = int(pool_size)
         self.pool_seed = int(pool_seed)
         self.index_seed = int(index_seed)
-        self.dtype = DTYPES[str(dtype)]
+        self.dtype = _parse_pool_dtype(dtype)
         self.chunk_size = int(chunk_size)
         self.whiten = bool(whiten)
         self.index_generator = torch.Generator(device="cpu")
@@ -94,12 +105,42 @@ class FixedPoolNoiseSampler:
             )
             pool[start:end].copy_(chunk.to(dtype=self.dtype))
         if self.whiten:
-            # Remove trivial realized-pool mean/std bias per coordinate.
-            work = pool.float()
-            mean = work.mean(dim=0, keepdim=True)
-            std = work.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
-            pool = ((work - mean) / std).to(dtype=self.dtype)
+            # Remove trivial realized-pool mean/std bias per coordinate without
+            # materializing a full float32 copy of potentially very large pools.
+            self._whiten_pool_(pool)
         return pool.pin_memory() if torch.cuda.is_available() else pool
+
+    def _whiten_pool_(self, pool: torch.Tensor) -> None:
+        count = int(pool.shape[0])
+        if count <= 0:
+            raise ValueError("Cannot whiten an empty fixed noise pool")
+
+        sums = torch.zeros(self.image_shape, dtype=torch.float64, device="cpu")
+        sums_sq = torch.zeros_like(sums)
+
+        for start in range(0, count, self.chunk_size):
+            end = min(start + self.chunk_size, count)
+            chunk = pool[start:end].to(dtype=torch.float32, copy=True)
+            sums += chunk.sum(dim=0, dtype=torch.float64)
+            chunk.square_()
+            sums_sq += chunk.sum(dim=0, dtype=torch.float64)
+
+        mean64 = sums / count
+        variance64 = (sums_sq / count) - mean64.square()
+        mean = mean64.to(dtype=torch.float32).unsqueeze(0)
+        std = (
+            variance64.clamp_min(0.0)
+            .sqrt()
+            .clamp_min(1e-6)
+            .to(dtype=torch.float32)
+            .unsqueeze(0)
+        )
+
+        for start in range(0, count, self.chunk_size):
+            end = min(start + self.chunk_size, count)
+            chunk = pool[start:end].to(dtype=torch.float32)
+            chunk.sub_(mean).div_(std)
+            pool[start:end].copy_(chunk.to(dtype=pool.dtype))
 
     def _fingerprint_indices(self, sample_rows: int = 16) -> list[int]:
         sample_rows = max(1, min(int(sample_rows), self.pool_size))

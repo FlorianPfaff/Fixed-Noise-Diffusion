@@ -82,6 +82,12 @@ def _loss_or_blank(value: float | None) -> str:
     return "" if value is None else format_float(value)
 
 
+def _train_pool_seed_or_blank(
+    sampler: GaussianNoiseSampler | FixedPoolNoiseSampler,
+) -> int | str:
+    return sampler.pool_seed if isinstance(sampler, FixedPoolNoiseSampler) else ""
+
+
 def load_checkpoint_pool_fingerprint(
     run_dir: Path,
     epoch: int,
@@ -206,7 +212,7 @@ def evaluate_run_epoch(
         "step": step,
         "batches": int(args.batches),
         "batch_size": int(args.batch_size),
-        "train_pool_seed": config["noise"].get("pool_seed", ""),
+        "train_pool_seed": _train_pool_seed_or_blank(train_sampler),
         "train_pool_fingerprint_sha256": train_pool_fingerprint_sha256,
         "heldout_pool_seed": heldout_seed,
         "noise_mode": info.mode,

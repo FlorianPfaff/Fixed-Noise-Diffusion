@@ -5,6 +5,8 @@ from fixed_noise_diffusion.summarize_sample_quality import (
     condition_kind,
     condition_pool_size,
     merge_gap_summary,
+    plot_fid_by_pool,
+    plot_fid_vs_gap,
     read_gap_rows,
     read_quality_rows,
     summarize_quality,
@@ -107,6 +109,148 @@ def test_gap_summary_column_variants_are_merged(tmp_path):
     )
 
     assert merged[0]["denoising_gap_mean"] == "0.12"
+
+
+def test_fid_by_pool_plot_keeps_single_dataset_output_name(tmp_path):
+    output = tmp_path / "fid_by_pool.png"
+    plot_fid_by_pool(
+        [
+            {
+                "dataset": "cifar10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "12",
+                "fid_std": "0.5",
+            },
+            {
+                "dataset": "cifar10",
+                "kind": "gaussian",
+                "condition": "gaussian",
+                "pool_size": "",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "15",
+                "fid_std": "0.7",
+            },
+        ],
+        output,
+    )
+
+    assert output.is_file()
+    assert not (tmp_path / "fid_by_pool_cifar10.png").exists()
+
+
+def test_fid_by_pool_plot_splits_multiple_datasets(tmp_path):
+    output = tmp_path / "fid_by_pool.png"
+    plot_fid_by_pool(
+        [
+            {
+                "dataset": "cifar10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "12",
+                "fid_std": "0.5",
+            },
+            {
+                "dataset": "cifar10",
+                "kind": "gaussian",
+                "condition": "gaussian",
+                "pool_size": "",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "15",
+                "fid_std": "0.7",
+            },
+            {
+                "dataset": "stl10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "28",
+                "fid_std": "1.5",
+            },
+            {
+                "dataset": "stl10",
+                "kind": "gaussian",
+                "condition": "gaussian",
+                "pool_size": "",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "31",
+                "fid_std": "2.0",
+            },
+        ],
+        output,
+    )
+
+    assert not output.exists()
+    assert (tmp_path / "fid_by_pool_cifar10.png").is_file()
+    assert (tmp_path / "fid_by_pool_stl10.png").is_file()
+
+
+def test_fid_vs_gap_plot_splits_multiple_datasets(tmp_path):
+    output = tmp_path / "fid_vs_gap.png"
+    plot_fid_vs_gap(
+        [
+            {
+                "dataset": "cifar10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "12",
+                "fid_std": "0.5",
+                "denoising_gap_mean": "0.12",
+            },
+            {
+                "dataset": "cifar10",
+                "kind": "gaussian",
+                "condition": "gaussian",
+                "pool_size": "",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "15",
+                "fid_std": "0.7",
+                "denoising_gap_mean": "0.09",
+            },
+            {
+                "dataset": "stl10",
+                "kind": "fixed_pool",
+                "condition": "fixed_pool_1k",
+                "pool_size": "1000",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "28",
+                "fid_std": "1.5",
+                "denoising_gap_mean": "0.34",
+            },
+            {
+                "dataset": "stl10",
+                "kind": "gaussian",
+                "condition": "gaussian",
+                "pool_size": "",
+                "epoch": "50",
+                "n": "1",
+                "fid_mean": "31",
+                "fid_std": "2.0",
+                "denoising_gap_mean": "0.29",
+            },
+        ],
+        output,
+    )
+
+    assert not output.exists()
+    assert (tmp_path / "fid_vs_gap_cifar10.png").is_file()
+    assert (tmp_path / "fid_vs_gap_stl10.png").is_file()
     assert merged[0]["denoising_gap_std"] == "0.03"
 
 

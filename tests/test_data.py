@@ -1,5 +1,7 @@
-from fixed_noise_diffusion.data import _image_transform
+import pytest
 from PIL import Image
+
+from fixed_noise_diffusion.data import _image_transform
 
 
 def test_center_crop_resize_transform_returns_square_normalized_tensor():
@@ -14,3 +16,22 @@ def test_center_crop_resize_transform_returns_square_normalized_tensor():
     assert tensor.shape == (3, 64, 64)
     assert tensor.min().item() >= -1.0
     assert tensor.max().item() <= 1.0
+
+
+def test_image_transform_respects_grayscale_channel_config():
+    transform = _image_transform(
+        {"image_size": 32, "channels": 1},
+        native_size=32,
+    )
+
+    image = Image.new("RGB", (32, 32), color=(128, 128, 128))
+    tensor = transform(image)
+
+    assert tensor.shape == (1, 32, 32)
+    assert tensor.min().item() >= -1.0
+    assert tensor.max().item() <= 1.0
+
+
+def test_image_transform_rejects_unsupported_torchvision_channel_count():
+    with pytest.raises(ValueError, match="data.channels=1 or 3"):
+        _image_transform({"image_size": 32, "channels": 2}, native_size=32)

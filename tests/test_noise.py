@@ -28,6 +28,42 @@ def test_fixed_pool_reuses_existing_pool_on_fork():
     assert fork.sample(2).shape == (2, 3, 4, 4)
 
 
+def test_whitened_fixed_pool_is_normalized_per_coordinate():
+    sampler = FixedPoolNoiseSampler(
+        image_shape=(2, 3, 3),
+        device=torch.device("cpu"),
+        pool_size=32,
+        pool_seed=123,
+        index_seed=456,
+        dtype="float32",
+        chunk_size=5,
+        whiten=True,
+    )
+
+    pool = sampler.pool.float()
+    mean = pool.mean(dim=0)
+    std = pool.std(dim=0, unbiased=False)
+
+    assert sampler.info.whitened
+    assert sampler.info.mode == "fixed_pool_whitened"
+    assert torch.allclose(mean, torch.zeros_like(mean), atol=1e-6)
+    assert torch.allclose(std, torch.ones_like(std), atol=1e-5)
+
+
+def test_fixed_pool_rejects_unknown_pool_dtype():
+    with pytest.raises(ValueError, match="Unsupported noise\\.pool_dtype 'float64'"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=1,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float64",
+            chunk_size=1,
+            whiten=False,
+        )
+
+
 def test_fixed_pool_fingerprint_is_stable_and_detects_pool_seed():
     sampler_a = FixedPoolNoiseSampler(
         image_shape=(3, 4, 4),

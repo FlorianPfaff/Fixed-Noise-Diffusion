@@ -17,6 +17,7 @@ from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import _to_uint8
+from .metrics_utils import effective_kid_subset_size
 from .utils import generator_for, resolve_device, seed_everything
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
@@ -176,7 +177,11 @@ def evaluate_run_epoch(
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
     kid = KernelInceptionDistance(
         feature=args.fid_feature,
-        subset_size=min(args.kid_subset_size, args.sample_count),
+        subset_size=effective_kid_subset_size(
+            args.kid_subset_size,
+            args.sample_count,
+            args.real_count,
+        ),
         normalize=False,
     ).to(device)
     requested_real_count = int(args.real_count or args.sample_count)
