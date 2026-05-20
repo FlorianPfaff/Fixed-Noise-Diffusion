@@ -254,6 +254,21 @@ def evaluate_checkpoint(
     return record
 
 
+def _training_runtime_config(training_cfg: dict[str, Any]) -> tuple[Any, int, int]:
+    max_train_steps = training_cfg.get("max_train_steps")
+    if max_train_steps is not None and int(max_train_steps) < 1:
+        raise ValueError("training.max_train_steps must be at least 1 or null")
+
+    grad_accum_steps = int(training_cfg.get("grad_accum_steps", 1))
+    if grad_accum_steps < 1:
+        raise ValueError("training.grad_accum_steps must be at least 1")
+
+    log_interval = int(training_cfg.get("log_interval_steps", 100))
+    if log_interval < 1:
+        raise ValueError("training.log_interval_steps must be at least 1")
+    return max_train_steps, grad_accum_steps, log_interval
+
+
 def train(config: dict[str, Any]) -> Path:
     seed_everything(int(config["seed"]))
     device = resolve_device(str(config["device"]))
@@ -313,9 +328,9 @@ def train(config: dict[str, Any]) -> Path:
     global_step = 0
     epoch = 0
     last_eval_record = None
-    max_train_steps = config["training"].get("max_train_steps")
-    grad_accum_steps = _positive_training_int(config, "grad_accum_steps", 1)
-    log_interval = _positive_training_int(config, "log_interval_steps", 100)
+    max_train_steps, grad_accum_steps, log_interval = _training_runtime_config(
+        config["training"]
+    )
 
     for epoch in range(1, int(config["training"]["epochs"]) + 1):
         model.train()

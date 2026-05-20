@@ -374,3 +374,45 @@ def test_large_fixed_pool_stays_cpu_backed():
     assert sampler.info.pool_size == 100_000
     assert sampler.info.pool_memory_mb < 1
     assert sampler.sample(4).device.type == "cpu"
+
+
+def test_fixed_pool_rejects_invalid_pool_size():
+    with pytest.raises(ValueError, match="pool_size"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=0,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=4,
+            whiten=False,
+        )
+
+
+def test_fixed_pool_rejects_invalid_chunk_size():
+    with pytest.raises(ValueError, match="pool_chunk_size"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=4,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=0,
+            whiten=False,
+        )
+
+
+def test_fixed_pool_rejects_unknown_dtype():
+    with pytest.raises(ValueError, match="pool_dtype"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=4,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float64",
+            chunk_size=4,
+            whiten=False,
+        )

@@ -18,6 +18,18 @@ def test_center_crop_resize_transform_returns_square_normalized_tensor():
     assert tensor.max().item() <= 1.0
 
 
+def test_center_crop_resizes_to_configured_size_without_resize_flag():
+    transform = _image_transform(
+        {"image_size": 64, "resize": False, "center_crop_size": 178},
+        native_size=218,
+    )
+
+    image = Image.new("RGB", (178, 218), color=(128, 128, 128))
+    tensor = transform(image)
+
+    assert tensor.shape == (3, 64, 64)
+
+
 def test_image_transform_respects_grayscale_channel_config():
     transform = _image_transform(
         {"image_size": 32, "channels": 1},

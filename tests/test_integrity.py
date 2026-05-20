@@ -4,6 +4,7 @@ from typing import Any
 
 import torch
 from fixed_noise_diffusion.config import load_config
+from fixed_noise_diffusion.integrity import git_metadata
 from fixed_noise_diffusion.train import train
 
 
@@ -82,3 +83,21 @@ def test_tiny_training_reproducibility_key_metrics(tmp_path):
     assert model_a.keys() == model_b.keys()
     for key, tensor in model_a.items():
         assert torch.equal(tensor, model_b[key])
+
+
+def test_git_metadata_reads_common_worktree_refs(tmp_path):
+    repo = tmp_path / "repo"
+    common = tmp_path / "common_git"
+    worktree_git = tmp_path / "worktree_git"
+    repo.mkdir()
+    common.mkdir()
+    worktree_git.mkdir()
+    (repo / ".git").write_text(f"gitdir: {worktree_git}\n", encoding="utf-8")
+    (worktree_git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (worktree_git / "commondir").write_text(f"{common}\n", encoding="utf-8")
+    ref_path = common / "refs" / "heads"
+    ref_path.mkdir(parents=True)
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    (ref_path / "main").write_text(f"{commit}\n", encoding="utf-8")
+
+    assert git_metadata(repo) == {"branch": "main", "commit": commit}

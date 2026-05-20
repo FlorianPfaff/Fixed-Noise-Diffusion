@@ -7,6 +7,7 @@ from fixed_noise_diffusion.train import (
     _positive_training_int,
     _should_finish_accumulation,
     _require_train_batches,
+    _training_runtime_config,
     train,
 )
 
@@ -78,6 +79,18 @@ def test_training_positive_integer_config_rejects_invalid_log_interval():
 def test_training_positive_integer_config_accepts_defaults_and_strings():
     assert _positive_training_int({"training": {}}, "log_interval_steps", 100) == 100
     assert _positive_training_int({"training": {"log_interval_steps": "7"}}, "log_interval_steps", 100) == 7
+
+
+def test_training_runtime_config_rejects_invalid_log_interval():
+    with pytest.raises(ValueError, match="log_interval_steps"):
+        _training_runtime_config({"grad_accum_steps": 1, "log_interval_steps": 0})
+
+
+def test_training_runtime_config_rejects_nonpositive_max_steps():
+    with pytest.raises(ValueError, match="max_train_steps"):
+        _training_runtime_config(
+            {"grad_accum_steps": 1, "log_interval_steps": 1, "max_train_steps": 0}
+        )
 
 
 def test_train_rejects_zero_training_batches(tmp_path):

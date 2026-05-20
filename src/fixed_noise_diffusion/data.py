@@ -99,10 +99,13 @@ def _image_transform(data_cfg: dict[str, Any], native_size: int) -> Any:
     image_size = int(data_cfg["image_size"])
     channels = int(data_cfg.get("channels", 3))
     steps: list[Any] = []
+    effective_native_size = int(native_size)
     crop_size = data_cfg.get("center_crop_size")
     if crop_size is not None:
-        steps.append(transforms.CenterCrop(int(crop_size)))
-    if image_size != int(native_size) or bool(data_cfg.get("resize", False)):
+        crop_size = int(crop_size)
+        steps.append(transforms.CenterCrop(crop_size))
+        effective_native_size = crop_size
+    if image_size != effective_native_size or bool(data_cfg.get("resize", False)):
         steps.append(transforms.Resize((image_size, image_size), antialias=True))
     steps.extend(_torchvision_channel_steps(transforms, channels))
     mean, std = _normalize_stats(channels)
