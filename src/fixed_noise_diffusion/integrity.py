@@ -45,6 +45,24 @@ def _resolve_git_dir(start: Path) -> Path | None:
     return None
 
 
+def _resolve_common_git_dir(git_dir: Path) -> Path:
+    common_dir_path = git_dir / "commondir"
+    if not common_dir_path.exists():
+        return git_dir
+    raw_common_dir = common_dir_path.read_text(encoding="utf-8").strip()
+    if not raw_common_dir:
+        return git_dir
+    common_dir = Path(raw_common_dir)
+    if not common_dir.is_absolute():
+        common_dir = git_dir / common_dir
+    return common_dir.resolve()
+
+
+def _read_loose_ref(git_dir: Path, ref: str) -> str | None:
+    ref_path = git_dir / ref
+    return ref_path.read_text(encoding="utf-8").strip() if ref_path.exists() else None
+
+
 def _read_packed_ref(git_dir: Path, ref: str) -> str | None:
     packed_refs = git_dir / "packed-refs"
     if not packed_refs.exists():
@@ -62,6 +80,7 @@ def git_metadata(cwd: Path | None = None) -> dict[str, str | None]:
     git_dir = _resolve_git_dir((cwd or Path.cwd()).resolve())
     if git_dir is None:
         return {"branch": None, "commit": None}
+    common_git_dir = _resolve_common_git_dir(git_dir)
 
     head_path = git_dir / "HEAD"
     if not head_path.exists():
@@ -72,12 +91,12 @@ def git_metadata(cwd: Path | None = None) -> dict[str, str | None]:
         return {"branch": None, "commit": head}
 
     ref = head.split(" ", maxsplit=1)[1]
-    ref_path = git_dir / ref
-    commit = None
-    if ref_path.exists():
-        commit = ref_path.read_text(encoding="utf-8").strip()
-    else:
-        commit = _read_packed_ref(git_dir, ref)
+    commit = (
+        _read_loose_ref(git_dir, ref)
+        or _read_loose_ref(common_git_dir, ref)
+        or _read_packed_ref(git_dir, ref)
+        or _read_packed_ref(common_git_dir, ref)
+    )
     branch = ref.removeprefix("refs/heads/")
     return {"branch": branch, "commit": commit}
 

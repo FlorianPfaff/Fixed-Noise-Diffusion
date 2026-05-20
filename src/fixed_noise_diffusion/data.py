@@ -35,12 +35,24 @@ class LoaderBundle:
     val: DataLoader
 
 
-def _subset(dataset: Dataset, size: int | None, seed: int) -> Dataset:
+def _validated_subset_size(size: int | None, name: str) -> int | None:
+    if size is None:
+        return None
+    parsed = int(size)
+    if parsed < 0:
+        raise ValueError(f"data.{name} must be non-negative or null")
+    return parsed
+
+
+def _subset(
+    dataset: Dataset, size: int | None, seed: int, *, name: str = "subset_size"
+) -> Dataset:
+    size = _validated_subset_size(size, name)
     if size is None or size >= len(dataset):
         return dataset
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
-    indices = torch.randperm(len(dataset), generator=generator)[: int(size)].tolist()
+    indices = torch.randperm(len(dataset), generator=generator)[:size].tolist()
     return Subset(dataset, indices)
 
 
@@ -55,25 +67,52 @@ def _make_dataset_pair(
     train_dataset = dataset_cls(**common_kwargs, **train_kwargs)
     val_dataset = dataset_cls(**common_kwargs, **val_kwargs)
     return (
-        _subset(train_dataset, data_cfg.get("subset_size"), seed),
-        _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1),
+        _subset(train_dataset, data_cfg.get("subset_size"), seed, name="subset_size"),
+        _subset(
+            val_dataset,
+            data_cfg.get("eval_subset_size"),
+            seed + 1,
+            name="eval_subset_size",
+        ),
     )
+
+
+def _torchvision_channel_steps(transforms_module: Any, channels: int) -> list[Any]:
+    if channels == 3:
+        return []
+    if channels == 1:
+        return [transforms_module.Grayscale(num_output_channels=1)]
+    raise ValueError(
+        f"Torchvision image datasets support data.channels=1 or 3; got {channels}. "
+        "Use dataset='fake' for arbitrary channel counts."
+    )
+
+
+def _normalize_stats(channels: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    values = (0.5,) * channels
+    return values, values
 
 
 def _image_transform(data_cfg: dict[str, Any], native_size: int) -> Any:
     from torchvision import transforms
 
     image_size = int(data_cfg["image_size"])
+    channels = int(data_cfg.get("channels", 3))
     steps: list[Any] = []
+    effective_native_size = int(native_size)
     crop_size = data_cfg.get("center_crop_size")
     if crop_size is not None:
-        steps.append(transforms.CenterCrop(int(crop_size)))
-    if image_size != int(native_size) or bool(data_cfg.get("resize", False)):
+        crop_size = int(crop_size)
+        steps.append(transforms.CenterCrop(crop_size))
+        effective_native_size = crop_size
+    if image_size != effective_native_size or bool(data_cfg.get("resize", False)):
         steps.append(transforms.Resize((image_size, image_size), antialias=True))
+    steps.extend(_torchvision_channel_steps(transforms, channels))
+    mean, std = _normalize_stats(channels)
     steps.extend(
         [
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            transforms.Normalize(mean, std),
         ]
     )
     return transforms.Compose(steps)

@@ -17,9 +17,25 @@ from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import _to_uint8
+from .metrics_utils import effective_kid_subset_size
+from .sweep import run_identity_from_config
 from .utils import generator_for, resolve_device, seed_everything
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
+
+
+def _parse_run_metadata(run_name: str) -> tuple[str, int | None]:
+    match = RUN_RE.match(run_name)
+    if match:
+        return match.group("condition"), int(match.group("seed"))
+    return run_name, None
+
+
+def _evaluation_seed(
+    base_seed: int, run_seed: int | None, epoch: int, *, offset: int = 0
+) -> int:
+    seed_component = 0 if run_seed is None else int(run_seed)
+    return int(base_seed) + int(offset) + seed_component * 1000 + int(epoch)
 
 
 def _prepare_config(
@@ -30,10 +46,12 @@ def _prepare_config(
     sample_steps: int,
     sampler: str,
     real_split: str,
+    download_data: bool = False,
 ) -> dict[str, Any]:
     data_cfg = config["data"]
     eval_cfg = config["evaluation"]
-    data_cfg["download"] = True
+    if download_data:
+        data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(sample_batch_size)
     if real_split == "val":
         if data_cfg.get("eval_subset_size") is None:
@@ -78,7 +96,8 @@ def _update_real_metrics(
         images = images[:remaining].to(device, non_blocking=True)
         real_uint8 = _to_uint8(images).to(device)
         fid.update(real_uint8, real=True)
-        kid.update(real_uint8, real=True)
+        if kid is not None:
+            kid.update(real_uint8, real=True)
         seen += int(images.shape[0])
     if seen < count:
         raise ValueError(f"Only collected {seen} real images, requested {count}")
@@ -121,7 +140,8 @@ def _generate_fake_metrics(
         )
         fake_uint8 = _to_uint8(samples).to(device)
         fid.update(fake_uint8, real=False)
-        kid.update(fake_uint8, real=False)
+        if kid is not None:
+            kid.update(fake_uint8, real=False)
         if len(grid_samples) < grid_count:
             needed = grid_count - len(grid_samples)
             grid_samples.extend(samples[:needed].detach().cpu())
@@ -143,14 +163,11 @@ def evaluate_run_epoch(
     from torchmetrics.image.fid import FrechetInceptionDistance
     from torchmetrics.image.kid import KernelInceptionDistance
 
-    device = resolve_device(args.device)
-    match = RUN_RE.match(run_dir.name)
-    condition = match.group("condition") if match else run_dir.name
-    seed = int(match.group("seed")) if match else -1
-    seed_everything(args.seed + seed * 1000 + epoch)
-
     start = time.perf_counter()
+    device = resolve_device(args.device)
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
+    condition, run_seed = run_identity_from_config(run_dir, config)
+    seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
     config = _prepare_config(
         config,
         sample_count=args.sample_count,
@@ -159,15 +176,23 @@ def evaluate_run_epoch(
         sample_steps=args.sample_steps,
         sampler=args.sampler,
         real_split=args.real_split,
+        download_data=bool(args.download_data),
     )
 
-    fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
-    kid = KernelInceptionDistance(
-        feature=args.fid_feature,
-        subset_size=min(args.kid_subset_size, args.sample_count),
-        normalize=False,
-    ).to(device)
     requested_real_count = int(args.real_count or args.sample_count)
+    fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
+    kid_subset_size = effective_kid_subset_size(
+        args.kid_subset_size,
+        args.sample_count,
+        requested_real_count,
+    )
+    kid = None
+    if kid_subset_size >= 2:
+        kid = KernelInceptionDistance(
+            feature=args.fid_feature,
+            subset_size=kid_subset_size,
+            normalize=False,
+        ).to(device)
     real_count = _update_real_metrics(
         fid,
         kid,
@@ -188,16 +213,24 @@ def evaluate_run_epoch(
         sample_batch_size=args.sample_batch_size,
         sample_steps=args.sample_steps,
         sampler=args.sampler,
-        seed=args.seed + 50_000 + seed * 1000 + epoch,
+        seed=_evaluation_seed(args.seed, run_seed, epoch, offset=50_000),
         grid_count=args.grid_count,
         grid_path=grid_path,
     )
-    kid_mean, kid_std = kid.compute()
+    kid_mean = kid_std = None
+    if kid is not None:
+        kid_mean, kid_std = kid.compute()
     seconds = time.perf_counter() - start
+    data_cfg = config.get("data", {})
+    noise_cfg = config.get("noise", {})
     return {
         "run_name": run_dir.name,
+        "dataset": str(data_cfg.get("dataset", "")).lower(),
         "condition": condition,
-        "seed": seed,
+        "seed": run_seed if run_seed is not None else -1,
+        "noise_mode": str(noise_cfg.get("mode", "")),
+        "pool_size": "" if noise_cfg.get("pool_size") is None else noise_cfg.get("pool_size"),
+        "pool_dtype": str(noise_cfg.get("pool_dtype", "")),
         "epoch": epoch,
         "step": step,
         "sample_count": args.sample_count,
@@ -208,9 +241,10 @@ def evaluate_run_epoch(
         "sample_steps": args.sample_steps,
         "sampler": args.sampler,
         "fid_feature": args.fid_feature,
+        "kid_subset_size": kid_subset_size,
         "fid": float(fid.compute().item()),
-        "kid_mean": float(kid_mean.item()),
-        "kid_std": float(kid_std.item()),
+        "kid_mean": None if kid_mean is None else float(kid_mean.item()),
+        "kid_std": None if kid_std is None else float(kid_std.item()),
         "seconds": round(seconds, 3),
         "grid_path": str(grid_path),
     }
@@ -259,6 +293,12 @@ def main() -> None:
         choices=["val", "train"],
         default="val",
         help="CIFAR split to use for real FID/KID statistics.",
+    )
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Allow torchvision dataset downloads during evaluation. By default, "
+        "the checkpoint config's data.download setting is preserved.",
     )
     parser.add_argument("--sample-batch-size", type=int, default=256)
     parser.add_argument("--sample-steps", type=int, default=50)

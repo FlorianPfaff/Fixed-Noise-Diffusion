@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .evaluate import denoising_loss
@@ -15,8 +17,8 @@ from .noise import (
     GaussianNoiseSampler,
     make_noise_sampler,
 )
-from .summarize_sample_quality import condition_kind, write_csv
-from .sweep import add_common_sweep_eval_args, run_identity, select_run_dirs
+from .summarize_sample_quality import condition_kind, normalize_dataset_label, write_csv
+from .sweep import add_common_sweep_eval_args, run_identity_from_config, select_run_dirs
 from .utils import (
     float_or_nan,
     format_float,
@@ -33,10 +35,12 @@ def prepare_eval_config(
     batches: int,
     data_dir: str | None,
     num_workers: int,
+    download_data: bool = False,
 ) -> dict[str, Any]:
     prepared = deepcopy(config)
     data_cfg = prepared["data"]
-    data_cfg["download"] = True
+    if download_data:
+        data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(batch_size)
     data_cfg["num_workers"] = int(num_workers)
     if data_dir is not None:
@@ -76,8 +80,69 @@ def _append_record(csv_path: Path, jsonl_path: Path, record: dict[str, Any]) -> 
         handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
+
+def _dataset_label(config: dict[str, Any]) -> str:
+    data_cfg = config.get("data", {})
+    dataset = data_cfg.get("dataset") if isinstance(data_cfg, dict) else None
+    return normalize_dataset_label(dataset)
+
 def _loss_or_blank(value: float | None) -> str:
     return "" if value is None else format_float(value)
+
+
+def _train_pool_seed_or_blank(
+    sampler: GaussianNoiseSampler | FixedPoolNoiseSampler,
+) -> int | str:
+    return sampler.pool_seed if isinstance(sampler, FixedPoolNoiseSampler) else ""
+
+
+def load_checkpoint_pool_fingerprint(
+    run_dir: Path,
+    epoch: int,
+    device: torch.device,
+) -> dict[str, Any] | None:
+    checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    fingerprint = checkpoint.get("train_noise_pool_fingerprint")
+    if fingerprint is None:
+        return None
+    if not isinstance(fingerprint, dict):
+        raise ValueError(
+            f"Invalid train_noise_pool_fingerprint in {checkpoint_path}: "
+            f"expected dict, got {type(fingerprint).__name__}"
+        )
+    return fingerprint
+
+
+def verify_train_pool_fingerprint(
+    run_dir: Path,
+    epoch: int,
+    train_sampler: Any,
+    device: torch.device,
+) -> str:
+    checkpoint_fingerprint = load_checkpoint_pool_fingerprint(run_dir, epoch, device)
+    if checkpoint_fingerprint is None:
+        return ""
+    if not isinstance(train_sampler, FixedPoolNoiseSampler):
+        raise ValueError(
+            f"{run_dir} epoch {epoch} contains a fixed-pool fingerprint, "
+            "but the reconstructed training noise sampler is not fixed-pool"
+        )
+
+    current_fingerprint = train_sampler.pool_fingerprint()
+    if checkpoint_fingerprint != current_fingerprint:
+        raise ValueError(
+            f"Reconstructed train noise pool for {run_dir} epoch {epoch} "
+            "does not match the checkpoint fingerprint "
+            f"(checkpoint sha256="
+            f"{checkpoint_fingerprint.get('sha256', '<missing>')}, "
+            f"reconstructed sha256={current_fingerprint.get('sha256', '<missing>')}). "
+            "Check noise.pool_seed, noise.pool_dtype, noise.pool_chunk_size, "
+            "noise.whiten, and data image shape."
+        )
+    return str(current_fingerprint["sha256"])
 
 
 def evaluate_run_epoch(
@@ -86,15 +151,23 @@ def evaluate_run_epoch(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
     device = resolve_device(args.device)
-    condition, run_seed = run_identity(run_dir)
-    seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
-
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
+    condition, run_seed = run_identity_from_config(run_dir, config)
+    seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
     config = prepare_eval_config(
-        config, args.batch_size, args.batches, args.data_dir, args.num_workers
+        config,
+        args.batch_size,
+        args.batches,
+        args.data_dir,
+        args.num_workers,
+        download_data=bool(args.download_data),
     )
+    dataset = _dataset_label(config)
     loaders = make_dataloaders(config)
     train_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
+    train_pool_fingerprint_sha256 = verify_train_pool_fingerprint(
+        run_dir, epoch, train_sampler, device
+    )
     gaussian_sampler = GaussianNoiseSampler(
         image_shape=train_sampler.image_shape,
         device=device,
@@ -144,6 +217,7 @@ def evaluate_run_epoch(
     info = train_sampler.info
     return {
         "run_name": run_dir.name,
+        "dataset": dataset,
         "condition": condition,
         "kind": condition_kind(condition),
         "pool_size": "" if info.pool_size is None else info.pool_size,
@@ -152,7 +226,8 @@ def evaluate_run_epoch(
         "step": step,
         "batches": int(args.batches),
         "batch_size": int(args.batch_size),
-        "train_pool_seed": config["noise"].get("pool_seed", ""),
+        "train_pool_seed": _train_pool_seed_or_blank(train_sampler),
+        "train_pool_fingerprint_sha256": train_pool_fingerprint_sha256,
         "heldout_pool_seed": heldout_seed,
         "noise_mode": info.mode,
         "train_noise_loss": format_float(train_loss),
@@ -170,9 +245,10 @@ def evaluate_run_epoch(
 
 
 def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         key = (
+            str(row.get("dataset", "")),
             str(row["kind"]),
             str(row["condition"]),
             str(row.get("pool_size", "")),
@@ -181,8 +257,9 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
         grouped.setdefault(key, []).append(row)
 
     summary: list[dict[str, str]] = []
-    for (kind, condition, pool_size, epoch), group in grouped.items():
+    for (dataset, kind, condition, pool_size, epoch), group in grouped.items():
         item = {
+            "dataset": dataset,
             "kind": kind,
             "condition": condition,
             "pool_size": pool_size,
@@ -205,6 +282,7 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sorted(
         summary,
         key=lambda row: (
+            row.get("dataset", ""),
             row["kind"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
@@ -222,6 +300,12 @@ def main() -> None:
     parser.add_argument("--heldout-pool-seed-offset", type=int, default=1_000_003)
     parser.add_argument("--gaussian-seed-offset", type=int, default=20_000)
     parser.add_argument("--timestep-seed-offset", type=int, default=30_000)
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Allow torchvision dataset downloads during evaluation. By default, "
+        "the checkpoint config's data.download setting is preserved.",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir.expanduser()

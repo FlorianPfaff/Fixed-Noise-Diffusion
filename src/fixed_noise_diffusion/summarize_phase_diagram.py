@@ -11,6 +11,7 @@ from .plotting import save_figure
 from .summarize_sample_quality import (
     condition_kind,
     condition_pool_size,
+    normalize_dataset_label,
     write_csv,
 )
 from .utils import float_or_nan, format_float
@@ -49,19 +50,31 @@ def infer_model(label: str, condition: str) -> str:
 
 
 def _pool_size_from_row(row: dict[str, str]) -> int | None:
-    condition = row["condition"]
-    parsed = condition_pool_size(condition)
-    if parsed is not None:
-        return parsed
-
     for key in ("pool_size", "pool_size_sort"):
         raw_value = row.get(key, "")
         if raw_value in ("", "inf", "None", None):
             continue
-        value = float(raw_value)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
         if math.isfinite(value):
             return int(value)
-    return None
+    return condition_pool_size(row["condition"])
+
+
+def _kind_from_row(row: dict[str, str], condition: str) -> str:
+    explicit = row.get("kind", "")
+    if explicit:
+        return explicit
+    noise_mode = str(row.get("noise_mode", ""))
+    if noise_mode == "gaussian":
+        return "gaussian"
+    if noise_mode == "fixed_pool_whitened":
+        return "whitened"
+    if noise_mode == "fixed_pool":
+        return "fixed_pool"
+    return condition_kind(condition)
 
 
 def normalize_summary_row(
@@ -71,10 +84,11 @@ def normalize_summary_row(
     pool_size = _pool_size_from_row(row)
     normalized = {
         "series": label,
+        "dataset": normalize_dataset_label(row.get("dataset")),
         "schedule": infer_schedule(label, condition),
         "model": infer_model(label, condition),
         "condition": condition,
-        "kind": row.get("kind") or condition_kind(condition),
+        "kind": _kind_from_row(row, condition),
         "pool_size": "" if pool_size is None else str(pool_size),
         "epoch": row.get("epoch", ""),
         "n": row.get("n", ""),
@@ -103,6 +117,7 @@ def read_phase_rows(input_specs: list[str]) -> list[dict[str, str]]:
         key=lambda row: (
             row["model"],
             row["schedule"],
+            row["dataset"],
             row["series"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
@@ -126,14 +141,86 @@ def _pool_value(row: dict[str, str]) -> int | None:
     return int(row["pool_size"]) if row.get("pool_size") else None
 
 
-def _series_groups(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
-    groups: dict[str, list[dict[str, str]]] = {}
+def _is_fixed_pool_row(row: dict[str, str]) -> bool:
+    return row.get("kind") in {"fixed_pool", "whitened"} and _pool_value(row) is not None
+
+
+def _is_gaussian_row(row: dict[str, str]) -> bool:
+    return row.get("kind") == "gaussian"
+
+
+def _series_groups(
+    rows: list[dict[str, str]],
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    groups: dict[tuple[str, str], list[dict[str, str]]] = {}
     for row in rows:
-        groups.setdefault(row["series"], []).append(row)
+        dataset = normalize_dataset_label(row.get("dataset"))
+        groups.setdefault((dataset, row["series"]), []).append(row)
     return groups
 
 
-def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
+def _series_legend_label(dataset: str, series: str) -> str:
+    return f"{dataset} / {series}" if dataset else series
+
+
+def _row_epoch(row: dict[str, str]) -> int | None:
+    raw = row.get("epoch", "")
+    if raw in ("", None):
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def select_plot_rows(
+    rows: list[dict[str, str]], epoch: int | None = None
+) -> list[dict[str, str]]:
+    if epoch is not None:
+        return [row for row in rows if _row_epoch(row) == int(epoch)]
+
+    latest_by_condition: dict[tuple[str, str, str, str], tuple[int, dict[str, str]]] = {}
+    rows_without_epoch: list[dict[str, str]] = []
+    for row in rows:
+        row_epoch = _row_epoch(row)
+        if row_epoch is None:
+            rows_without_epoch.append(row)
+            continue
+        key = (
+            row.get("series", ""),
+            row.get("kind", ""),
+            row.get("condition", ""),
+            row.get("pool_size", ""),
+        )
+        previous = latest_by_condition.get(key)
+        if previous is None or row_epoch > previous[0]:
+            latest_by_condition[key] = (row_epoch, row)
+
+    selected = [item[1] for item in latest_by_condition.values()]
+    selected.extend(rows_without_epoch)
+    return sorted(
+        selected,
+        key=lambda row: (
+            row["model"],
+            row["schedule"],
+            row["series"],
+            int(row["pool_size"]) if row["pool_size"] else 10**18,
+            row["condition"],
+        ),
+    )
+
+
+def parse_plot_epoch(raw: str) -> int | None:
+    normalized = str(raw).strip().lower()
+    if normalized in {"", "final", "latest"}:
+        return None
+    return int(normalized)
+
+
+def plot_phase_diagram(
+    rows: list[dict[str, str]], output: Path, *, epoch: int | None = None
+) -> None:
+    rows = select_plot_rows(rows, epoch)
     if not rows:
         return
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
@@ -144,9 +231,11 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
     ]
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for axis, (metric, title) in zip(axes, metric_titles):
-        for index, (series, group) in enumerate(sorted(_series_groups(rows).items())):
+        for index, ((dataset, series), group) in enumerate(
+            sorted(_series_groups(rows).items())
+        ):
             color = colors[index % len(colors)]
-            fixed = [row for row in group if _pool_value(row) is not None]
+            fixed = [row for row in group if _is_fixed_pool_row(row)]
             fixed = sorted(fixed, key=lambda row: int(row["pool_size"]))
             if fixed:
                 x_values = [_pool_value(row) for row in fixed]
@@ -159,11 +248,11 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
                     yerr=y_errors if has_errors else None,
                     marker="o",
                     capsize=3 if has_errors else 0,
-                    label=series,
+                    label=_series_legend_label(dataset, series),
                     color=color,
                 )
             gaussian = [
-                _metric_value(row, metric) for row in group if _pool_value(row) is None
+                _metric_value(row, metric) for row in group if _is_gaussian_row(row)
             ]
             if gaussian:
                 axis.axhline(
@@ -195,6 +284,11 @@ def main() -> None:
     )
     parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     parser.add_argument("--prefix", default="wp2_phase_diagram")
+    parser.add_argument(
+        "--plot-epoch",
+        default="final",
+        help="Epoch to plot, or 'final'/'latest' for the latest row per series and condition.",
+    )
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args()
 
@@ -205,7 +299,11 @@ def main() -> None:
     rows = read_phase_rows(args.input)
     write_csv(output_dir / f"{args.prefix}_combined.csv", rows)
     if not args.no_plot:
-        plot_phase_diagram(rows, output_dir / f"{args.prefix}.png")
+        plot_phase_diagram(
+            rows,
+            output_dir / f"{args.prefix}.png",
+            epoch=parse_plot_epoch(args.plot_epoch),
+        )
 
 
 if __name__ == "__main__":

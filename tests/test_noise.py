@@ -28,6 +28,131 @@ def test_fixed_pool_reuses_existing_pool_on_fork():
     assert fork.sample(2).shape == (2, 3, 4, 4)
 
 
+def test_whitened_fixed_pool_is_normalized_per_coordinate():
+    sampler = FixedPoolNoiseSampler(
+        image_shape=(2, 3, 3),
+        device=torch.device("cpu"),
+        pool_size=32,
+        pool_seed=123,
+        index_seed=456,
+        dtype="float32",
+        chunk_size=5,
+        whiten=True,
+    )
+
+    pool = sampler.pool.float()
+    mean = pool.mean(dim=0)
+    std = pool.std(dim=0, unbiased=False)
+
+    assert sampler.info.whitened
+    assert sampler.info.mode == "fixed_pool_whitened"
+    assert torch.allclose(mean, torch.zeros_like(mean), atol=1e-6)
+    assert torch.allclose(std, torch.ones_like(std), atol=1e-5)
+
+
+def test_fixed_pool_rejects_unknown_pool_dtype():
+    with pytest.raises(ValueError, match="Unsupported noise\\.pool_dtype 'float64'"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=1,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float64",
+            chunk_size=1,
+            whiten=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"pool_size": 0}, "pool_size must be a positive integer"),
+        ({"pool_size": -1}, "pool_size must be a positive integer"),
+        ({"pool_size": 1.5}, "pool_size must be a positive integer"),
+        ({"chunk_size": 0}, "chunk_size must be a positive integer"),
+        ({"chunk_size": -1}, "chunk_size must be a positive integer"),
+        (
+            {"image_shape": (3, 0, 4)},
+            "image_shape must be a 3-tuple of positive integers",
+        ),
+        (
+            {"image_shape": (3, 4)},
+            "image_shape must be a 3-tuple of positive integers",
+        ),
+    ],
+)
+def test_fixed_pool_rejects_invalid_configuration(overrides, match):
+    kwargs = {
+        "image_shape": (3, 4, 4),
+        "device": torch.device("cpu"),
+        "pool_size": 8,
+        "pool_seed": 1,
+        "index_seed": 2,
+        "dtype": "float32",
+        "chunk_size": 4,
+        "whiten": False,
+    }
+    kwargs.update(overrides)
+
+    with pytest.raises(ValueError, match=match):
+        FixedPoolNoiseSampler(**kwargs)
+
+
+def test_fixed_pool_rejects_mismatched_existing_pool_shape():
+    with pytest.raises(ValueError, match="existing_pool must have shape"):
+        FixedPoolNoiseSampler(
+            image_shape=(3, 4, 4),
+            device=torch.device("cpu"),
+            pool_size=8,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=4,
+            whiten=False,
+            existing_pool=torch.empty((7, 3, 4, 4)),
+        )
+
+
+def test_fixed_pool_fingerprint_is_stable_and_detects_pool_seed():
+    sampler_a = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=1,
+        index_seed=2,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+    sampler_b = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=1,
+        index_seed=3,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+    sampler_c = FixedPoolNoiseSampler(
+        image_shape=(3, 4, 4),
+        device=torch.device("cpu"),
+        pool_size=8,
+        pool_seed=9,
+        index_seed=2,
+        dtype="float32",
+        chunk_size=4,
+        whiten=False,
+    )
+
+    fingerprint_a = sampler_a.pool_fingerprint()
+
+    assert fingerprint_a == sampler_b.pool_fingerprint()
+    assert fingerprint_a["sha256"] != sampler_c.pool_fingerprint()["sha256"]
+    assert sampler_a.fork(99).pool_fingerprint() == fingerprint_a
+
+
 def test_gaussian_sampler_shape():
     sampler = GaussianNoiseSampler((3, 8, 8), torch.device("cpu"), seed=1)
     noise = sampler.sample(5)
@@ -249,3 +374,45 @@ def test_large_fixed_pool_stays_cpu_backed():
     assert sampler.info.pool_size == 100_000
     assert sampler.info.pool_memory_mb < 1
     assert sampler.sample(4).device.type == "cpu"
+
+
+def test_fixed_pool_rejects_invalid_pool_size():
+    with pytest.raises(ValueError, match="pool_size"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=0,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=4,
+            whiten=False,
+        )
+
+
+def test_fixed_pool_rejects_invalid_chunk_size():
+    with pytest.raises(ValueError, match="pool_chunk_size"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=4,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float32",
+            chunk_size=0,
+            whiten=False,
+        )
+
+
+def test_fixed_pool_rejects_unknown_dtype():
+    with pytest.raises(ValueError, match="pool_dtype"):
+        FixedPoolNoiseSampler(
+            image_shape=(1, 1, 1),
+            device=torch.device("cpu"),
+            pool_size=4,
+            pool_seed=1,
+            index_seed=2,
+            dtype="float64",
+            chunk_size=4,
+            whiten=False,
+        )

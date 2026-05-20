@@ -12,7 +12,7 @@ from tqdm import tqdm
 from .config import add_config_args, load_config, save_config
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
-from .evaluate import denoising_loss, first_real_batch, optional_fid_kid, sample_grid
+from .evaluate import collect_real_images, denoising_loss, optional_fid_kid, sample_grid
 from .integrity import build_run_metadata, build_run_summary, write_json
 from .logging_utils import MetricLogger
 from .model import build_model
@@ -32,6 +32,19 @@ def _should_checkpoint(epoch: int, training_cfg: dict[str, Any]) -> bool:
     return int(epoch) in {int(value) for value in checkpoint_epochs}
 
 
+def _positive_training_int(config: dict[str, Any], key: str, default: int) -> int:
+    value = int(config["training"].get(key, default))
+    if value < 1:
+        raise ValueError(f"training.{key} must be at least 1")
+    return value
+
+
+def _pool_fingerprint_for_checkpoint(train_noise_sampler) -> dict[str, Any] | None:
+    if isinstance(train_noise_sampler, FixedPoolNoiseSampler):
+        return train_noise_sampler.pool_fingerprint()
+    return None
+
+
 def _save_checkpoint(
     run_dir: Path,
     epoch: int,
@@ -39,6 +52,7 @@ def _save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     config: dict[str, Any],
+    train_pool_fingerprint: dict[str, Any] | None = None,
 ) -> None:
     checkpoint = {
         "epoch": epoch,
@@ -47,6 +61,8 @@ def _save_checkpoint(
         "optimizer": optimizer.state_dict(),
         "config": config,
     }
+    if train_pool_fingerprint is not None:
+        checkpoint["train_noise_pool_fingerprint"] = train_pool_fingerprint
     torch.save(checkpoint, run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt")
 
 
@@ -73,6 +89,21 @@ def _should_finish_accumulation(
 ) -> bool:
     _accumulation_group_size(batch_index, total_batches, grad_accum_steps)
     return batch_index % grad_accum_steps == 0 or batch_index == total_batches
+
+
+def _mean_accumulated_loss(loss_sum: float, accumulation_steps: int) -> float:
+    if accumulation_steps < 1:
+        raise ValueError("accumulation_steps must be at least 1")
+    return loss_sum / accumulation_steps
+
+
+def _require_train_batches(total_train_batches: int) -> None:
+    if total_train_batches < 1:
+        raise ValueError(
+            "Training loader produced no batches. Reduce data.batch_size or "
+            "increase the training dataset size/subset_size; drop_last=True "
+            "discards incomplete batches."
+        )
 
 
 def make_evaluation_samplers(
@@ -187,7 +218,7 @@ def evaluate_checkpoint(
     )
     metrics = {"fid": None, "kid_mean": None, "kid_std": None}
     if bool(eval_cfg.get("enable_metrics", False)) and samples.numel() > 0:
-        real = first_real_batch(loaders.val, device, samples.shape[0])
+        real = collect_real_images(loaders.val, device, samples.shape[0])
         metrics = optional_fid_kid(real, samples, device)
 
     info = train_noise_sampler.info
@@ -223,6 +254,21 @@ def evaluate_checkpoint(
     return record
 
 
+def _training_runtime_config(training_cfg: dict[str, Any]) -> tuple[Any, int, int]:
+    max_train_steps = training_cfg.get("max_train_steps")
+    if max_train_steps is not None and int(max_train_steps) < 1:
+        raise ValueError("training.max_train_steps must be at least 1 or null")
+
+    grad_accum_steps = int(training_cfg.get("grad_accum_steps", 1))
+    if grad_accum_steps < 1:
+        raise ValueError("training.grad_accum_steps must be at least 1")
+
+    log_interval = int(training_cfg.get("log_interval_steps", 100))
+    if log_interval < 1:
+        raise ValueError("training.log_interval_steps must be at least 1")
+    return max_train_steps, grad_accum_steps, log_interval
+
+
 def train(config: dict[str, Any]) -> Path:
     seed_everything(int(config["seed"]))
     device = resolve_device(str(config["device"]))
@@ -236,13 +282,17 @@ def train(config: dict[str, Any]) -> Path:
     timer = Timer()
 
     loaders = make_dataloaders(config)
+    _require_train_batches(len(loaders.train))
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
     train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
     heldout_noise_sampler = make_heldout_pool_sampler(
         config, train_noise_sampler, device
     )
+    train_pool_fingerprint = _pool_fingerprint_for_checkpoint(train_noise_sampler)
     metadata = build_run_metadata(config, run_dir, device, train_noise_sampler.info)
+    if train_pool_fingerprint is not None:
+        metadata["train_noise_pool_fingerprint"] = train_pool_fingerprint
     write_json(run_dir / "run_metadata.json", metadata)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -278,19 +328,17 @@ def train(config: dict[str, Any]) -> Path:
     global_step = 0
     epoch = 0
     last_eval_record = None
-    max_train_steps = config["training"].get("max_train_steps")
-    grad_accum_steps = int(config["training"].get("grad_accum_steps", 1))
-    if grad_accum_steps < 1:
-        raise ValueError("training.grad_accum_steps must be at least 1")
-    log_interval = int(config["training"].get("log_interval_steps", 100))
+    max_train_steps, grad_accum_steps, log_interval = _training_runtime_config(
+        config["training"]
+    )
 
     for epoch in range(1, int(config["training"]["epochs"]) + 1):
         model.train()
         total_train_batches = len(loaders.train)
-        if total_train_batches < 1:
-            continue
+        _require_train_batches(total_train_batches)
         progress = tqdm(loaders.train, desc=f"epoch {epoch}", leave=False)
         optimizer.zero_grad(set_to_none=True)
+        accumulated_loss = 0.0
         for batch_index, (images, _) in enumerate(progress, start=1):
             images = images.to(device, non_blocking=True)
             batch_size = images.shape[0]
@@ -314,6 +362,7 @@ def train(config: dict[str, Any]) -> Path:
                 loss = F.mse_loss(pred_noise, noise, reduction="mean")
                 scaled_loss = loss / accumulation_steps
             scaler.scale(scaled_loss).backward()
+            accumulated_loss += float(loss.detach().item())
 
             if _should_finish_accumulation(
                 batch_index,
@@ -324,6 +373,8 @@ def train(config: dict[str, Any]) -> Path:
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 global_step += 1
+                step_loss = _mean_accumulated_loss(accumulated_loss, accumulation_steps)
+                accumulated_loss = 0.0
 
                 if global_step % log_interval == 0 or global_step == 1:
                     lr = optimizer.param_groups[0]["lr"]
@@ -333,7 +384,7 @@ def train(config: dict[str, Any]) -> Path:
                             "epoch": epoch,
                             "step": global_step,
                             "split": "train",
-                            "loss": float(loss.item()),
+                            "loss": step_loss,
                             "lr": float(lr),
                             "noise_mode": train_noise_sampler.info.mode,
                             "pool_size": train_noise_sampler.info.pool_size,
@@ -343,7 +394,7 @@ def train(config: dict[str, Any]) -> Path:
                             "seconds": round(timer.elapsed(), 3),
                         }
                     )
-                    progress.set_postfix(loss=f"{loss.item():.4f}")
+                    progress.set_postfix(loss=f"{step_loss:.4f}")
 
             if max_train_steps is not None and global_step >= int(max_train_steps):
                 break
@@ -364,7 +415,15 @@ def train(config: dict[str, Any]) -> Path:
                 timer,
             )
             if bool(config["training"].get("save_checkpoint", True)):
-                _save_checkpoint(run_dir, epoch, global_step, model, optimizer, config)
+                _save_checkpoint(
+                    run_dir,
+                    epoch,
+                    global_step,
+                    model,
+                    optimizer,
+                    config,
+                    train_pool_fingerprint=train_pool_fingerprint,
+                )
 
         if max_train_steps is not None and global_step >= int(max_train_steps):
             break
