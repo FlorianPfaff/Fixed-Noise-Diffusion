@@ -11,6 +11,7 @@ from .plotting import save_figure
 from .summarize_sample_quality import (
     condition_kind,
     condition_pool_size,
+    normalize_dataset_label,
     write_csv,
 )
 from .utils import float_or_nan, format_float
@@ -71,6 +72,7 @@ def normalize_summary_row(
     pool_size = _pool_size_from_row(row)
     normalized = {
         "series": label,
+        "dataset": normalize_dataset_label(row.get("dataset")),
         "schedule": infer_schedule(label, condition),
         "model": infer_model(label, condition),
         "condition": condition,
@@ -103,6 +105,7 @@ def read_phase_rows(input_specs: list[str]) -> list[dict[str, str]]:
         key=lambda row: (
             row["model"],
             row["schedule"],
+            row["dataset"],
             row["series"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
@@ -126,11 +129,18 @@ def _pool_value(row: dict[str, str]) -> int | None:
     return int(row["pool_size"]) if row.get("pool_size") else None
 
 
-def _series_groups(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
-    groups: dict[str, list[dict[str, str]]] = {}
+def _series_groups(
+    rows: list[dict[str, str]],
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    groups: dict[tuple[str, str], list[dict[str, str]]] = {}
     for row in rows:
-        groups.setdefault(row["series"], []).append(row)
+        dataset = normalize_dataset_label(row.get("dataset"))
+        groups.setdefault((dataset, row["series"]), []).append(row)
     return groups
+
+
+def _series_legend_label(dataset: str, series: str) -> str:
+    return f"{dataset} / {series}" if dataset else series
 
 
 def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
@@ -144,7 +154,9 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
     ]
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for axis, (metric, title) in zip(axes, metric_titles):
-        for index, (series, group) in enumerate(sorted(_series_groups(rows).items())):
+        for index, ((dataset, series), group) in enumerate(
+            sorted(_series_groups(rows).items())
+        ):
             color = colors[index % len(colors)]
             fixed = [row for row in group if _pool_value(row) is not None]
             fixed = sorted(fixed, key=lambda row: int(row["pool_size"]))
@@ -159,7 +171,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
                     yerr=y_errors if has_errors else None,
                     marker="o",
                     capsize=3 if has_errors else 0,
-                    label=series,
+                    label=_series_legend_label(dataset, series),
                     color=color,
                 )
             gaussian = [

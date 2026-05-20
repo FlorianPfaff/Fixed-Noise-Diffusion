@@ -132,6 +132,9 @@ def optional_fid_kid(
 ) -> dict[str, float | None]:
     if real_images.numel() == 0 or fake_images.numel() == 0:
         return {"fid": None, "kid_mean": None, "kid_std": None}
+    min_image_count = min(int(real_images.shape[0]), int(fake_images.shape[0]))
+    if min_image_count < 2:
+        return {"fid": None, "kid_mean": None, "kid_std": None}
     try:
         from torchmetrics.image.fid import FrechetInceptionDistance
         from torchmetrics.image.kid import KernelInceptionDistance
@@ -140,19 +143,35 @@ def optional_fid_kid(
 
     real_uint8 = _to_uint8(real_images).to(device)
     fake_uint8 = _to_uint8(fake_images).to(device)
-    fid = FrechetInceptionDistance(feature=64, normalize=False).to(device)
-    fid.update(real_uint8, real=True)
-    fid.update(fake_uint8, real=False)
+    fid_value: float | None = None
+    try:
+        fid = FrechetInceptionDistance(feature=64, normalize=False).to(device)
+        fid.update(real_uint8, real=True)
+        fid.update(fake_uint8, real=False)
+        fid_value = float(fid.compute().item())
+    except Exception:
+        fid_value = None
 
-    kid_subset_size = min(50, int(real_uint8.shape[0]), int(fake_uint8.shape[0]))
-    kid = KernelInceptionDistance(subset_size=kid_subset_size, normalize=False).to(device)
-    kid.update(real_uint8, real=True)
-    kid.update(fake_uint8, real=False)
-    kid_mean, kid_std = kid.compute()
+    kid_mean_value: float | None = None
+    kid_std_value: float | None = None
+    subset_size = min(50, min_image_count)
+    if subset_size >= 2:
+        try:
+            kid = KernelInceptionDistance(
+                subset_size=subset_size, normalize=False
+            ).to(device)
+            kid.update(real_uint8, real=True)
+            kid.update(fake_uint8, real=False)
+            kid_mean, kid_std = kid.compute()
+            kid_mean_value = float(kid_mean.item())
+            kid_std_value = float(kid_std.item())
+        except Exception:
+            kid_mean_value = None
+            kid_std_value = None
     return {
-        "fid": float(fid.compute().item()),
-        "kid_mean": float(kid_mean.item()),
-        "kid_std": float(kid_std.item()),
+        "fid": fid_value,
+        "kid_mean": kid_mean_value,
+        "kid_std": kid_std_value,
     }
 
 

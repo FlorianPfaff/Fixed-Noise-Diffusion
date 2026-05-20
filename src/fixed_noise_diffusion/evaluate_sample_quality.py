@@ -18,6 +18,7 @@ from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import _to_uint8
 from .metrics_utils import effective_kid_subset_size
+from .sweep import run_identity_from_config
 from .utils import generator_for, resolve_device, seed_everything
 
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
@@ -92,7 +93,8 @@ def _update_real_metrics(
         images = images[:remaining].to(device, non_blocking=True)
         real_uint8 = _to_uint8(images).to(device)
         fid.update(real_uint8, real=True)
-        kid.update(real_uint8, real=True)
+        if kid is not None:
+            kid.update(real_uint8, real=True)
         seen += int(images.shape[0])
     if seen < count:
         raise ValueError(f"Only collected {seen} real images, requested {count}")
@@ -135,7 +137,8 @@ def _generate_fake_metrics(
         )
         fake_uint8 = _to_uint8(samples).to(device)
         fid.update(fake_uint8, real=False)
-        kid.update(fake_uint8, real=False)
+        if kid is not None:
+            kid.update(fake_uint8, real=False)
         if len(grid_samples) < grid_count:
             needed = grid_count - len(grid_samples)
             grid_samples.extend(samples[:needed].detach().cpu())
@@ -157,12 +160,11 @@ def evaluate_run_epoch(
     from torchmetrics.image.fid import FrechetInceptionDistance
     from torchmetrics.image.kid import KernelInceptionDistance
 
-    device = resolve_device(args.device)
-    condition, run_seed = _parse_run_metadata(run_dir.name)
-    seed_everything(_evaluation_seed(args.seed, run_seed, epoch))
-
     start = time.perf_counter()
+    device = resolve_device(args.device)
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
+    condition, run_seed = run_identity_from_config(run_dir, config)
+    seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
     config = _prepare_config(
         config,
         sample_count=args.sample_count,
@@ -173,18 +175,20 @@ def evaluate_run_epoch(
         real_split=args.real_split,
     )
 
+    requested_real_count = int(args.real_count or args.sample_count)
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
     kid_subset_size = effective_kid_subset_size(
         args.kid_subset_size,
         args.sample_count,
-        args.real_count,
+        requested_real_count,
     )
-    kid = KernelInceptionDistance(
-        feature=args.fid_feature,
-        subset_size=kid_subset_size,
-        normalize=False,
-    ).to(device)
-    requested_real_count = int(args.real_count or args.sample_count)
+    kid = None
+    if kid_subset_size >= 2:
+        kid = KernelInceptionDistance(
+            feature=args.fid_feature,
+            subset_size=kid_subset_size,
+            normalize=False,
+        ).to(device)
     real_count = _update_real_metrics(
         fid,
         kid,
@@ -209,12 +213,20 @@ def evaluate_run_epoch(
         grid_count=args.grid_count,
         grid_path=grid_path,
     )
-    kid_mean, kid_std = kid.compute()
+    kid_mean = kid_std = None
+    if kid is not None:
+        kid_mean, kid_std = kid.compute()
     seconds = time.perf_counter() - start
+    data_cfg = config.get("data", {})
+    noise_cfg = config.get("noise", {})
     return {
         "run_name": run_dir.name,
+        "dataset": str(data_cfg.get("dataset", "")).lower(),
         "condition": condition,
         "seed": run_seed if run_seed is not None else -1,
+        "noise_mode": str(noise_cfg.get("mode", "")),
+        "pool_size": "" if noise_cfg.get("pool_size") is None else noise_cfg.get("pool_size"),
+        "pool_dtype": str(noise_cfg.get("pool_dtype", "")),
         "epoch": epoch,
         "step": step,
         "sample_count": args.sample_count,
@@ -227,8 +239,8 @@ def evaluate_run_epoch(
         "fid_feature": args.fid_feature,
         "kid_subset_size": kid_subset_size,
         "fid": float(fid.compute().item()),
-        "kid_mean": float(kid_mean.item()),
-        "kid_std": float(kid_std.item()),
+        "kid_mean": None if kid_mean is None else float(kid_mean.item()),
+        "kid_std": None if kid_std is None else float(kid_std.item()),
         "seconds": round(seconds, 3),
         "grid_path": str(grid_path),
     }

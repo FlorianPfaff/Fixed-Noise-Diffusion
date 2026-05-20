@@ -15,7 +15,16 @@ import numpy as np
 import torch
 
 
+NUMPY_SEED_MODULUS = 2**32
+
+
+def normalize_seed(seed: int) -> int:
+    """Map any integer seed into the range accepted by NumPy's legacy RNG."""
+    return int(seed) % NUMPY_SEED_MODULUS
+
+
 def seed_everything(seed: int, deterministic: bool = True) -> None:
+    seed = normalize_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -72,7 +81,7 @@ def generator_for(device: torch.device | str, seed: int) -> torch.Generator:
     device = torch.device(device)
     generator_device = str(device) if device.type == "cuda" else "cpu"
     generator = torch.Generator(device=generator_device)
-    generator.manual_seed(int(seed))
+    generator.manual_seed(normalize_seed(seed))
     return generator
 
 

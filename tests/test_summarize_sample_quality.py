@@ -1,7 +1,9 @@
 import csv
 
 from fixed_noise_diffusion.summarize_sample_quality import (
+    _dataset_groups,
     canonical_condition,
+    condition_from_row,
     condition_kind,
     condition_pool_size,
     merge_gap_summary,
@@ -28,9 +30,14 @@ def test_condition_parsing():
     assert condition_pool_size("fixed_pool_10k") == 10_000
     assert condition_kind("fixed_pool_whitened_100k") == "whitened"
     assert condition_pool_size("fixed_pool_whitened_100k") == 100_000
+    assert condition_kind("cifar10_base") == "unknown"
     assert canonical_condition("cifar10_fixed_pool_1k") == "fixed_pool_1k"
     assert condition_kind("stl10_gaussian") == "gaussian"
     assert condition_pool_size("celeba64_fixed_pool_10k") == 10_000
+    assert canonical_condition("cifar10_poolseed_1000_ps111") == "fixed_pool_1000"
+    assert condition_kind("cifar10_poolseed_1000_ps111") == "fixed_pool"
+    assert condition_pool_size("cifar10_poolseed_1000_ps111") == 1000
+    assert condition_pool_size("poolseed_10k_ps222") == 10_000
 
 
 def test_summarize_quality_groups_by_condition_and_epoch(tmp_path):
@@ -122,6 +129,71 @@ def test_summarize_quality_keeps_metric_protocols_separate(tmp_path):
     assert by_sample_count["2048"]["kid_subset_size"] == "100"
     assert by_sample_count["4096"]["n"] == "1"
     assert by_sample_count["4096"]["fid_mean"] == "99"
+
+
+def test_nonstandard_quality_condition_uses_noise_metadata():
+    assert (
+        condition_from_row(
+            {"condition": "cifar10_base", "noise_mode": "gaussian", "pool_size": ""},
+            "cifar10_base",
+        )
+        == "gaussian"
+    )
+    assert (
+        condition_from_row(
+            {"condition": "manual", "noise_mode": "fixed_pool", "pool_size": "1000"},
+            "manual",
+        )
+        == "fixed_pool_1k"
+    )
+
+
+def test_pool_seed_robustness_runs_are_grouped_by_pool_size(tmp_path):
+    quality_path = tmp_path / "quality" / "sample_quality.csv"
+    quality_path.parent.mkdir()
+    _write_csv(
+        quality_path,
+        [
+            {
+                "run_name": "wp2_100ep_cifar10_poolseed_1000_ps111_seed0",
+                "condition": "cifar10_poolseed_1000_ps111",
+                "seed": "0",
+                "epoch": "100",
+                "fid": "10",
+                "kid_mean": "0.1",
+                "seconds": "3",
+            },
+            {
+                "run_name": "wp2_100ep_cifar10_poolseed_1000_ps222_seed0",
+                "condition": "cifar10_poolseed_1000_ps222",
+                "seed": "0",
+                "epoch": "100",
+                "fid": "14",
+                "kid_mean": "0.3",
+                "seconds": "5",
+            },
+        ],
+    )
+
+    rows = read_quality_rows([quality_path.parent])
+    summary = summarize_quality(rows)
+
+    assert len(rows) == 2
+    assert [row["source_condition"] for row in rows] == [
+        "cifar10_poolseed_1000_ps111",
+        "cifar10_poolseed_1000_ps222",
+    ]
+    assert [row["condition"] for row in rows] == [
+        "fixed_pool_1000",
+        "fixed_pool_1000",
+    ]
+    assert len(summary) == 1
+    assert summary[0]["dataset"] == "cifar10"
+    assert summary[0]["condition"] == "fixed_pool_1000"
+    assert summary[0]["pool_size"] == "1000"
+    assert summary[0]["n"] == "2"
+    assert summary[0]["fid_mean"] == "12"
+    assert summary[0]["kid_mean_mean"] == "0.2"
 
 
 def test_gap_summary_column_variants_are_merged(tmp_path):
@@ -362,6 +434,22 @@ def test_dataset_prefixed_quality_conditions_join_canonical_gap_rows(tmp_path):
     by_dataset = {row["dataset"]: row for row in merged}
     assert by_dataset["cifar10"]["denoising_gap_mean"] == "0.12"
     assert by_dataset["stl10"]["denoising_gap_mean"] == "0.45"
+
+
+def test_dataset_groups_keep_plot_inputs_separate():
+    rows = [
+        {"dataset": "stl10", "condition": "fixed_pool_1k"},
+        {"dataset": "cifar10", "condition": "gaussian"},
+        {"condition": "fixed_pool_10k"},
+    ]
+
+    groups = _dataset_groups(rows)
+
+    assert [(dataset, [row["condition"] for row in group]) for dataset, group in groups] == [
+        ("cifar10", ["gaussian"]),
+        ("stl10", ["fixed_pool_1k"]),
+        ("", ["fixed_pool_10k"]),
+    ]
 
 
 def test_gap_merge_requires_matching_epoch(tmp_path):

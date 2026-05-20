@@ -20,7 +20,7 @@ from .evaluate import denoising_loss_from_timesteps
 from .noise import GaussianNoiseSampler, make_noise_sampler
 from .plotting import save_figure
 from .summarize_sample_quality import condition_kind, condition_pool_size
-from .sweep import add_common_sweep_eval_args, run_identity, select_run_dirs
+from .sweep import add_common_sweep_eval_args, run_identity_from_config, select_run_dirs
 from .utils import (
     float_or_nan,
     format_float,
@@ -83,10 +83,10 @@ def evaluate_run(
     args: argparse.Namespace,
 ) -> list[dict[str, Any]]:
     device = resolve_device(args.device)
-    condition, run_seed = run_identity(run_dir)
     rows: list[dict[str, Any]] = []
 
     model, diffusion, config, step = load_checkpoint_model(run_dir, epochs[0], device)
+    condition, run_seed = run_identity_from_config(run_dir, config)
     config = _prepare_config(
         config, args.batch_size, args.batches, args.data_dir, args.num_workers
     )

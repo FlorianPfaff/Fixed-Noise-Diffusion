@@ -18,6 +18,7 @@ from .utils import (
 )
 
 POOL_RE = re.compile(r"(?:fixed_pool|fixed_pool_whitened)_(?P<size>\d+)(?P<unit>k?)$")
+POOL_SEED_RE = re.compile(r"poolseed_(?P<size>\d+)(?P<unit>k?)_ps\d+$")
 RUN_RE = re.compile(r"wp2_(?:\d+ep)_(?P<condition>.+)_seed(?P<seed>\d+)$")
 DATASET_PREFIXES = {
     "cifar10": ("cifar10", "cifar-10"),
@@ -35,6 +36,53 @@ QUALITY_PROTOCOL_COLUMNS = (
     "fid_feature",
     "kid_subset_size",
 )
+
+
+def _maybe_int(value: object) -> int | None:
+    if value in (None, "", "None", "none", "null"):
+        return None
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def pool_size_label(pool_size: int) -> str:
+    if pool_size >= 1000 and pool_size % 1000 == 0:
+        return f"{pool_size // 1000}k"
+    return str(pool_size)
+
+
+def condition_from_noise(
+    noise_mode: object,
+    pool_size: int | None,
+    whitened: bool = False,
+) -> str | None:
+    mode = str(noise_mode or "").strip()
+    if not mode:
+        return None
+    if mode == "gaussian":
+        return "gaussian"
+    if pool_size is None:
+        return None
+    label = pool_size_label(pool_size)
+    if mode == "fixed_pool_whitened" or "whitened" in mode or whitened:
+        return f"fixed_pool_whitened_{label}"
+    if mode == "fixed_pool":
+        return f"fixed_pool_{label}"
+    return mode
+
+
+def condition_from_row(row: dict[str, str], fallback_condition: str) -> str:
+    pool_size = _maybe_int(row.get("pool_size"))
+    noise_mode = row.get("noise_mode") or row.get("mode")
+    whitened = _truthy(row.get("whitened")) or _truthy(row.get("noise_whitened"))
+    condition = condition_from_noise(noise_mode, pool_size, whitened)
+    return condition if condition is not None else fallback_condition
 
 
 def _quality_protocol_key(row: dict[str, str]) -> tuple[str, ...]:
@@ -77,6 +125,9 @@ def _condition_from_run_name(run_name: str) -> str:
 
 def canonical_condition(condition: str) -> str:
     _, canonical = split_dataset_condition(condition)
+    pool_seed_match = POOL_SEED_RE.fullmatch(canonical)
+    if pool_seed_match is not None:
+        return f"fixed_pool_{pool_seed_match.group('size')}{pool_seed_match.group('unit')}"
     return canonical
 
 
@@ -101,7 +152,9 @@ def condition_kind(condition: str) -> str:
         return "gaussian"
     if "whitened" in condition:
         return "whitened"
-    return "fixed_pool"
+    if condition_pool_size(condition) is not None or condition.startswith("fixed_pool"):
+        return "fixed_pool"
+    return "unknown"
 
 
 def condition_pool_size(condition: str) -> int | None:
@@ -147,7 +200,8 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
         with path.open("r", newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
                 original_condition = row["condition"]
-                condition = canonical_condition(original_condition)
+                fallback_condition = canonical_condition(original_condition)
+                condition = condition_from_row(row, fallback_condition)
                 row = dict(row)
                 row["source_csv"] = str(path)
                 row["source_condition"] = original_condition
@@ -155,6 +209,8 @@ def read_quality_rows(paths: list[Path]) -> list[dict[str, str]]:
                 row["dataset"] = infer_quality_dataset(row, condition)
                 row["kind"] = condition_kind(condition)
                 pool_size = condition_pool_size(condition)
+                if pool_size is None:
+                    pool_size = _maybe_int(row.get("pool_size"))
                 row["pool_size"] = "" if pool_size is None else str(pool_size)
                 rows.append(row)
     return sorted(
@@ -270,17 +326,22 @@ def _std_or_zero(row: dict[str, str]) -> float:
     return 0.0 if math.isnan(fid_std) else fid_std
 
 
-def _dataset_title(dataset: str) -> str:
-    return dataset or "unknown dataset"
+def _dataset_sort_key(dataset: str) -> tuple[int, str]:
+    dataset = normalize_dataset_label(dataset)
+    return (1, "") if dataset == "" else (0, dataset)
 
 
-def _rows_by_dataset(
+def _dataset_groups(
     rows: list[dict[str, str]],
 ) -> list[tuple[str, list[dict[str, str]]]]:
     grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         grouped[normalize_dataset_label(row.get("dataset"))].append(row)
-    return sorted(grouped.items(), key=lambda item: item[0] or "~")
+    return [(dataset, grouped[dataset]) for dataset in sorted(grouped, key=_dataset_sort_key)]
+
+
+def _dataset_title(dataset: str) -> str:
+    return dataset if dataset else "unspecified dataset"
 
 
 def _dataset_axes(group_count: int, width: float, height_per_group: float):
@@ -357,7 +418,7 @@ def _plot_fid_by_pool_axis(
 def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
     groups = [
         (dataset, rows)
-        for dataset, rows in _rows_by_dataset(summary)
+        for dataset, rows in _dataset_groups(summary)
         if any(
             row["kind"] == "fixed_pool" and row["pool_size"] and row.get("epoch")
             for row in rows
@@ -438,7 +499,7 @@ def _plot_fid_vs_gap_axis(
 def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
     groups = [
         (dataset, rows)
-        for dataset, rows in _rows_by_dataset(summary)
+        for dataset, rows in _dataset_groups(summary)
         if any(
             row.get("denoising_gap_mean", "") != ""
             and row.get("fid_mean", "") != ""

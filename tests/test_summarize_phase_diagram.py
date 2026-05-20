@@ -1,4 +1,5 @@
 from fixed_noise_diffusion.summarize_phase_diagram import (
+    _series_groups,
     normalize_summary_row,
     parse_input_spec,
     read_phase_rows,
@@ -15,6 +16,7 @@ def test_parse_input_spec_requires_label():
 def test_normalize_summary_row_infers_schedule_model_and_pool_size(tmp_path):
     row = normalize_summary_row(
         {
+            "dataset": "CIFAR-10",
             "condition": "strong96_cosine_fixed_pool_20k",
             "epoch": "50",
             "n": "4",
@@ -26,11 +28,25 @@ def test_normalize_summary_row_infers_schedule_model_and_pool_size(tmp_path):
         tmp_path / "summary.csv",
     )
 
+    assert row["dataset"] == "cifar10"
     assert row["schedule"] == "cosine"
     assert row["model"] == "strong96"
     assert row["kind"] == "fixed_pool"
     assert row["pool_size"] == "20000"
     assert row["fid_mean"] == "2.2"
+
+
+def test_series_groups_do_not_mix_datasets_with_same_series():
+    rows = [
+        {"dataset": "cifar10", "series": "cosine", "condition": "fixed_pool_1k"},
+        {"dataset": "stl10", "series": "cosine", "condition": "fixed_pool_1k"},
+    ]
+
+    groups = _series_groups(rows)
+
+    assert set(groups) == {("cifar10", "cosine"), ("stl10", "cosine")}
+    assert [row["dataset"] for row in groups[("cifar10", "cosine")]] == ["cifar10"]
+    assert [row["dataset"] for row in groups[("stl10", "cosine")]] == ["stl10"]
 
 
 def test_read_phase_rows_sorts_gaussian_after_fixed_pools(tmp_path):

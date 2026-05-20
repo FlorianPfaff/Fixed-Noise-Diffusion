@@ -1,7 +1,18 @@
 import pytest
 import torch
 
-from fixed_noise_diffusion.utils import generator_for, make_run_dir, resolve_device
+from fixed_noise_diffusion.utils import (
+    generator_for,
+    make_run_dir,
+    normalize_seed,
+    resolve_device,
+    seed_everything,
+)
+
+
+def test_normalize_seed_wraps_negative_values():
+    assert normalize_seed(-1) == 2**32 - 1
+    seed_everything(-1)
 
 
 def test_resolve_device_falls_back_for_indexed_cuda_when_unavailable(monkeypatch):
@@ -60,3 +71,8 @@ def test_make_run_dir_overwrite_replaces_existing_run(tmp_path):
     assert not (replacement / "metrics.csv").exists()
     assert (replacement / "checkpoints").is_dir()
     assert (replacement / "samples").is_dir()
+
+
+def test_resolve_device_falls_back_for_indexed_cuda(monkeypatch):
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    assert resolve_device("cuda:0").type == "cpu"

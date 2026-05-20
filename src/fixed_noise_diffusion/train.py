@@ -32,6 +32,13 @@ def _should_checkpoint(epoch: int, training_cfg: dict[str, Any]) -> bool:
     return int(epoch) in {int(value) for value in checkpoint_epochs}
 
 
+def _positive_training_int(config: dict[str, Any], key: str, default: int) -> int:
+    value = int(config["training"].get(key, default))
+    if value < 1:
+        raise ValueError(f"training.{key} must be at least 1")
+    return value
+
+
 def _pool_fingerprint_for_checkpoint(train_noise_sampler) -> dict[str, Any] | None:
     if isinstance(train_noise_sampler, FixedPoolNoiseSampler):
         return train_noise_sampler.pool_fingerprint()
@@ -82,6 +89,12 @@ def _should_finish_accumulation(
 ) -> bool:
     _accumulation_group_size(batch_index, total_batches, grad_accum_steps)
     return batch_index % grad_accum_steps == 0 or batch_index == total_batches
+
+
+def _mean_accumulated_loss(loss_sum: float, accumulation_steps: int) -> float:
+    if accumulation_steps < 1:
+        raise ValueError("accumulation_steps must be at least 1")
+    return loss_sum / accumulation_steps
 
 
 def _require_train_batches(total_train_batches: int) -> None:
@@ -254,6 +267,7 @@ def train(config: dict[str, Any]) -> Path:
     timer = Timer()
 
     loaders = make_dataloaders(config)
+    _require_train_batches(len(loaders.train))
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
     train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
@@ -300,10 +314,8 @@ def train(config: dict[str, Any]) -> Path:
     epoch = 0
     last_eval_record = None
     max_train_steps = config["training"].get("max_train_steps")
-    grad_accum_steps = int(config["training"].get("grad_accum_steps", 1))
-    if grad_accum_steps < 1:
-        raise ValueError("training.grad_accum_steps must be at least 1")
-    log_interval = int(config["training"].get("log_interval_steps", 100))
+    grad_accum_steps = _positive_training_int(config, "grad_accum_steps", 1)
+    log_interval = _positive_training_int(config, "log_interval_steps", 100)
 
     for epoch in range(1, int(config["training"]["epochs"]) + 1):
         model.train()
@@ -311,6 +323,7 @@ def train(config: dict[str, Any]) -> Path:
         _require_train_batches(total_train_batches)
         progress = tqdm(loaders.train, desc=f"epoch {epoch}", leave=False)
         optimizer.zero_grad(set_to_none=True)
+        accumulated_loss = 0.0
         for batch_index, (images, _) in enumerate(progress, start=1):
             images = images.to(device, non_blocking=True)
             batch_size = images.shape[0]
@@ -334,6 +347,7 @@ def train(config: dict[str, Any]) -> Path:
                 loss = F.mse_loss(pred_noise, noise, reduction="mean")
                 scaled_loss = loss / accumulation_steps
             scaler.scale(scaled_loss).backward()
+            accumulated_loss += float(loss.detach().item())
 
             if _should_finish_accumulation(
                 batch_index,
@@ -344,6 +358,8 @@ def train(config: dict[str, Any]) -> Path:
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 global_step += 1
+                step_loss = _mean_accumulated_loss(accumulated_loss, accumulation_steps)
+                accumulated_loss = 0.0
 
                 if global_step % log_interval == 0 or global_step == 1:
                     lr = optimizer.param_groups[0]["lr"]
@@ -353,7 +369,7 @@ def train(config: dict[str, Any]) -> Path:
                             "epoch": epoch,
                             "step": global_step,
                             "split": "train",
-                            "loss": float(loss.item()),
+                            "loss": step_loss,
                             "lr": float(lr),
                             "noise_mode": train_noise_sampler.info.mode,
                             "pool_size": train_noise_sampler.info.pool_size,
@@ -363,7 +379,7 @@ def train(config: dict[str, Any]) -> Path:
                             "seconds": round(timer.elapsed(), 3),
                         }
                     )
-                    progress.set_postfix(loss=f"{loss.item():.4f}")
+                    progress.set_postfix(loss=f"{step_loss:.4f}")
 
             if max_train_steps is not None and global_step >= int(max_train_steps):
                 break
