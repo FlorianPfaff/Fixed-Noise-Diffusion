@@ -54,3 +54,44 @@ def test_summarize_rows_does_not_require_seed_column_in_summary_rows():
             "denoising_gap_sem": "0.09999999999999999",
         }
     ]
+
+
+def test_summarize_rows_sorts_without_seed_key():
+    rows = [
+        {
+            "run_name": "run0",
+            "dataset": "cifar10",
+            "experiment": "standard",
+            "family": "fixed pool",
+            "noise_mode": "fixed_pool",
+            "condition": "fixed_pool_1k",
+            "pool_size": "1000",
+            "epoch": "100",
+            "step": "10",
+            "train_den_loss": "0.5",
+            "gaussian_den_loss": "0.6",
+            "denoising_gap": "0.1",
+            "source_run_dir": "runs/run0",
+        },
+        {
+            "run_name": "run1",
+            "dataset": "cifar10",
+            "experiment": "standard",
+            "family": "fixed pool",
+            "noise_mode": "fixed_pool",
+            "condition": "fixed_pool_1k",
+            "pool_size": "1000",
+            "epoch": "100",
+            "step": "12",
+            "train_den_loss": "0.5",
+            "gaussian_den_loss": "0.8",
+            "denoising_gap": "0.3",
+            "source_run_dir": "runs/run1",
+        },
+    ]
+
+    summary = summarize_rows(rows)
+
+    assert len(summary) == 1
+    assert summary[0]["n"] == "2"
+    assert summary[0]["denoising_gap_mean"] == "0.2"

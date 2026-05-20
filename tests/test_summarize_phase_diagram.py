@@ -1,4 +1,6 @@
 from fixed_noise_diffusion.summarize_phase_diagram import (
+    _is_fixed_pool_row,
+    _is_gaussian_row,
     _series_groups,
     normalize_summary_row,
     parse_input_spec,
@@ -47,6 +49,33 @@ def test_series_groups_do_not_mix_datasets_with_same_series():
     assert set(groups) == {("cifar10", "cosine"), ("stl10", "cosine")}
     assert [row["dataset"] for row in groups[("cifar10", "cosine")]] == ["cifar10"]
     assert [row["dataset"] for row in groups[("stl10", "cosine")]] == ["stl10"]
+
+
+def test_normalize_summary_row_prefers_explicit_metadata_for_nonstandard_condition(tmp_path):
+    row = normalize_summary_row(
+        {
+            "condition": "cifar10_dtype_float32_pool_250",
+            "noise_mode": "fixed_pool",
+            "pool_size": "250",
+            "epoch": "100",
+            "n": "3",
+            "fid_mean": "4.2",
+            "denoising_gap_mean": "0.11",
+            "low_mid_mean_timestep_gap": "0.07",
+        },
+        "dtype_control",
+        tmp_path / "summary.csv",
+    )
+
+    assert row["kind"] == "fixed_pool"
+    assert row["pool_size"] == "250"
+
+
+def test_phase_diagram_row_classification_keeps_poolless_fixed_pool_out_of_gaussian_baseline():
+    assert _is_gaussian_row({"kind": "gaussian", "pool_size": ""})
+    assert not _is_gaussian_row({"kind": "fixed_pool", "pool_size": ""})
+    assert not _is_fixed_pool_row({"kind": "fixed_pool", "pool_size": ""})
+    assert _is_fixed_pool_row({"kind": "fixed_pool", "pool_size": "1000"})
 
 
 def test_read_phase_rows_sorts_gaussian_after_fixed_pools(tmp_path):

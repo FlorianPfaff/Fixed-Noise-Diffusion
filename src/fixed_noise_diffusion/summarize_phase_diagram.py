@@ -50,19 +50,31 @@ def infer_model(label: str, condition: str) -> str:
 
 
 def _pool_size_from_row(row: dict[str, str]) -> int | None:
-    condition = row["condition"]
-    parsed = condition_pool_size(condition)
-    if parsed is not None:
-        return parsed
-
     for key in ("pool_size", "pool_size_sort"):
         raw_value = row.get(key, "")
         if raw_value in ("", "inf", "None", None):
             continue
-        value = float(raw_value)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
         if math.isfinite(value):
             return int(value)
-    return None
+    return condition_pool_size(row["condition"])
+
+
+def _kind_from_row(row: dict[str, str], condition: str) -> str:
+    explicit = row.get("kind", "")
+    if explicit:
+        return explicit
+    noise_mode = str(row.get("noise_mode", ""))
+    if noise_mode == "gaussian":
+        return "gaussian"
+    if noise_mode == "fixed_pool_whitened":
+        return "whitened"
+    if noise_mode == "fixed_pool":
+        return "fixed_pool"
+    return condition_kind(condition)
 
 
 def normalize_summary_row(
@@ -76,7 +88,7 @@ def normalize_summary_row(
         "schedule": infer_schedule(label, condition),
         "model": infer_model(label, condition),
         "condition": condition,
-        "kind": row.get("kind") or condition_kind(condition),
+        "kind": _kind_from_row(row, condition),
         "pool_size": "" if pool_size is None else str(pool_size),
         "epoch": row.get("epoch", ""),
         "n": row.get("n", ""),
@@ -129,6 +141,14 @@ def _pool_value(row: dict[str, str]) -> int | None:
     return int(row["pool_size"]) if row.get("pool_size") else None
 
 
+def _is_fixed_pool_row(row: dict[str, str]) -> bool:
+    return row.get("kind") in {"fixed_pool", "whitened"} and _pool_value(row) is not None
+
+
+def _is_gaussian_row(row: dict[str, str]) -> bool:
+    return row.get("kind") == "gaussian"
+
+
 def _series_groups(
     rows: list[dict[str, str]],
 ) -> dict[tuple[str, str], list[dict[str, str]]]:
@@ -158,7 +178,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
             sorted(_series_groups(rows).items())
         ):
             color = colors[index % len(colors)]
-            fixed = [row for row in group if _pool_value(row) is not None]
+            fixed = [row for row in group if _is_fixed_pool_row(row)]
             fixed = sorted(fixed, key=lambda row: int(row["pool_size"]))
             if fixed:
                 x_values = [_pool_value(row) for row in fixed]
@@ -175,7 +195,7 @@ def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
                     color=color,
                 )
             gaussian = [
-                _metric_value(row, metric) for row in group if _pool_value(row) is None
+                _metric_value(row, metric) for row in group if _is_gaussian_row(row)
             ]
             if gaussian:
                 axis.axhline(
