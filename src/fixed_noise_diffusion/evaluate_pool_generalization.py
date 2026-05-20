@@ -17,7 +17,7 @@ from .noise import (
     GaussianNoiseSampler,
     make_noise_sampler,
 )
-from .summarize_sample_quality import condition_kind, write_csv
+from .summarize_sample_quality import condition_kind, normalize_dataset_label, write_csv
 from .sweep import add_common_sweep_eval_args, run_identity_from_config, select_run_dirs
 from .utils import (
     float_or_nan,
@@ -35,9 +35,12 @@ def prepare_eval_config(
     batches: int,
     data_dir: str | None,
     num_workers: int,
+    download_data: bool = False,
 ) -> dict[str, Any]:
     prepared = deepcopy(config)
     data_cfg = prepared["data"]
+    if download_data:
+        data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(batch_size)
     data_cfg["num_workers"] = int(num_workers)
     if data_dir is not None:
@@ -76,6 +79,12 @@ def _append_record(csv_path: Path, jsonl_path: Path, record: dict[str, Any]) -> 
     with jsonl_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
 
+
+
+def _dataset_label(config: dict[str, Any]) -> str:
+    data_cfg = config.get("data", {})
+    dataset = data_cfg.get("dataset") if isinstance(data_cfg, dict) else None
+    return normalize_dataset_label(dataset)
 
 def _loss_or_blank(value: float | None) -> str:
     return "" if value is None else format_float(value)
@@ -146,8 +155,14 @@ def evaluate_run_epoch(
     condition, run_seed = run_identity_from_config(run_dir, config)
     seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
     config = prepare_eval_config(
-        config, args.batch_size, args.batches, args.data_dir, args.num_workers
+        config,
+        args.batch_size,
+        args.batches,
+        args.data_dir,
+        args.num_workers,
+        download_data=bool(args.download_data),
     )
+    dataset = _dataset_label(config)
     loaders = make_dataloaders(config)
     train_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
     train_pool_fingerprint_sha256 = verify_train_pool_fingerprint(
@@ -202,6 +217,7 @@ def evaluate_run_epoch(
     info = train_sampler.info
     return {
         "run_name": run_dir.name,
+        "dataset": dataset,
         "condition": condition,
         "kind": condition_kind(condition),
         "pool_size": "" if info.pool_size is None else info.pool_size,
@@ -229,9 +245,10 @@ def evaluate_run_epoch(
 
 
 def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         key = (
+            str(row.get("dataset", "")),
             str(row["kind"]),
             str(row["condition"]),
             str(row.get("pool_size", "")),
@@ -240,8 +257,9 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
         grouped.setdefault(key, []).append(row)
 
     summary: list[dict[str, str]] = []
-    for (kind, condition, pool_size, epoch), group in grouped.items():
+    for (dataset, kind, condition, pool_size, epoch), group in grouped.items():
         item = {
+            "dataset": dataset,
             "kind": kind,
             "condition": condition,
             "pool_size": pool_size,
@@ -264,6 +282,7 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sorted(
         summary,
         key=lambda row: (
+            row.get("dataset", ""),
             row["kind"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
@@ -281,6 +300,12 @@ def main() -> None:
     parser.add_argument("--heldout-pool-seed-offset", type=int, default=1_000_003)
     parser.add_argument("--gaussian-seed-offset", type=int, default=20_000)
     parser.add_argument("--timestep-seed-offset", type=int, default=30_000)
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Allow torchvision dataset downloads during evaluation. By default, "
+        "the checkpoint config's data.download setting is preserved.",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir.expanduser()

@@ -176,22 +176,32 @@ def optional_fid_kid(
 
 
 @torch.no_grad()
-def first_real_batch(
+def collect_real_images(
     loader: DataLoader, device: torch.device, count: int
 ) -> torch.Tensor:
+    count = int(count)
     if count <= 0:
         return torch.empty(0, device=device)
 
     batches: list[torch.Tensor] = []
-    total_count = 0
+    seen = 0
     for images, _ in loader:
-        remaining = count - total_count
+        remaining = count - seen
         if remaining <= 0:
             break
         selected = images[:remaining].to(device, non_blocking=True)
         batches.append(selected)
-        total_count += int(selected.shape[0])
+        seen += int(selected.shape[0])
 
-    if not batches:
-        raise ValueError("Validation loader produced no batches")
+    if seen < count:
+        raise ValueError(
+            f"Validation loader produced only {seen} real images, requested {count}"
+        )
     return torch.cat(batches, dim=0)
+
+
+@torch.no_grad()
+def first_real_batch(
+    loader: DataLoader, device: torch.device, count: int
+) -> torch.Tensor:
+    return collect_real_images(loader, device, count)

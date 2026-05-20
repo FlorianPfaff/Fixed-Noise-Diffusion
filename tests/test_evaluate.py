@@ -5,7 +5,11 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from fixed_noise_diffusion.evaluate import first_real_batch, optional_fid_kid
+from fixed_noise_diffusion.evaluate import (
+    collect_real_images,
+    first_real_batch,
+    optional_fid_kid,
+)
 
 
 def _install_fake_torchmetrics(monkeypatch, fid_cls, kid_cls):
@@ -39,6 +43,14 @@ def test_first_real_batch_collects_requested_images_across_batches():
     real = first_real_batch(loader, torch.device("cpu"), count=4)
 
     assert torch.equal(real, images[:4])
+
+
+def test_collect_real_images_rejects_too_few_images():
+    images = torch.zeros(2, 3, 2, 2)
+    loader = DataLoader(TensorDataset(images, torch.zeros(2)), batch_size=2)
+
+    with pytest.raises(ValueError, match="requested 3"):
+        collect_real_images(loader, torch.device("cpu"), 3)
 
 
 @pytest.mark.parametrize("real_count, fake_count", [(1, 1), (1, 4), (4, 1)])

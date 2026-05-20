@@ -3,8 +3,10 @@ from fixed_noise_diffusion.summarize_phase_diagram import (
     _is_gaussian_row,
     _series_groups,
     normalize_summary_row,
+    parse_plot_epoch,
     parse_input_spec,
     read_phase_rows,
+    select_plot_rows,
 )
 
 
@@ -95,3 +97,53 @@ def test_read_phase_rows_sorts_gaussian_after_fixed_pools(tmp_path):
     rows = read_phase_rows([f"cosine={summary}"])
 
     assert [row["pool_size"] for row in rows] == ["5000", ""]
+
+
+def test_select_plot_rows_defaults_to_latest_epoch_per_condition():
+    rows = [
+        {
+            "series": "cosine",
+            "schedule": "cosine",
+            "model": "base64",
+            "condition": "fixed_pool_1k",
+            "kind": "fixed_pool",
+            "pool_size": "1000",
+            "epoch": "50",
+        },
+        {
+            "series": "cosine",
+            "schedule": "cosine",
+            "model": "base64",
+            "condition": "fixed_pool_1k",
+            "kind": "fixed_pool",
+            "pool_size": "1000",
+            "epoch": "100",
+        },
+        {
+            "series": "cosine",
+            "schedule": "cosine",
+            "model": "base64",
+            "condition": "gaussian",
+            "kind": "gaussian",
+            "pool_size": "",
+            "epoch": "50",
+        },
+    ]
+
+    selected = select_plot_rows(rows)
+
+    assert [(row["condition"], row["epoch"]) for row in selected] == [
+        ("fixed_pool_1k", "100"),
+        ("gaussian", "50"),
+    ]
+
+
+def test_select_plot_rows_can_filter_explicit_epoch():
+    rows = [
+        {"condition": "fixed_pool_1k", "epoch": "50"},
+        {"condition": "fixed_pool_1k", "epoch": "100"},
+    ]
+
+    assert [row["epoch"] for row in select_plot_rows(rows, epoch=50)] == ["50"]
+    assert parse_plot_epoch("final") is None
+    assert parse_plot_epoch("100") == 100

@@ -35,12 +35,24 @@ class LoaderBundle:
     val: DataLoader
 
 
-def _subset(dataset: Dataset, size: int | None, seed: int) -> Dataset:
+def _validated_subset_size(size: int | None, name: str) -> int | None:
+    if size is None:
+        return None
+    parsed = int(size)
+    if parsed < 0:
+        raise ValueError(f"data.{name} must be non-negative or null")
+    return parsed
+
+
+def _subset(
+    dataset: Dataset, size: int | None, seed: int, *, name: str = "subset_size"
+) -> Dataset:
+    size = _validated_subset_size(size, name)
     if size is None or size >= len(dataset):
         return dataset
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
-    indices = torch.randperm(len(dataset), generator=generator)[: int(size)].tolist()
+    indices = torch.randperm(len(dataset), generator=generator)[:size].tolist()
     return Subset(dataset, indices)
 
 
@@ -55,8 +67,13 @@ def _make_dataset_pair(
     train_dataset = dataset_cls(**common_kwargs, **train_kwargs)
     val_dataset = dataset_cls(**common_kwargs, **val_kwargs)
     return (
-        _subset(train_dataset, data_cfg.get("subset_size"), seed),
-        _subset(val_dataset, data_cfg.get("eval_subset_size"), seed + 1),
+        _subset(train_dataset, data_cfg.get("subset_size"), seed, name="subset_size"),
+        _subset(
+            val_dataset,
+            data_cfg.get("eval_subset_size"),
+            seed + 1,
+            name="eval_subset_size",
+        ),
     )
 
 

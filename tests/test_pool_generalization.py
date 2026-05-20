@@ -123,14 +123,37 @@ def test_prepare_eval_config_expands_eval_subset():
     )
 
     assert config["data"]["eval_subset_size"] == 16
-    assert prepared["data"]["download"] is True
+    assert prepared["data"]["download"] is False
     assert prepared["data"]["data_dir"] == "alt-data"
     assert prepared["data"]["eval_subset_size"] == 96
+
+
+def test_prepare_eval_config_can_opt_into_downloads():
+    config = {
+        "data": {
+            "download": False,
+            "eval_batch_size": 8,
+            "num_workers": 4,
+            "eval_subset_size": 16,
+        }
+    }
+
+    prepared = prepare_eval_config(
+        config,
+        batch_size=8,
+        batches=1,
+        data_dir=None,
+        num_workers=0,
+        download_data=True,
+    )
+
+    assert prepared["data"]["download"] is True
 
 
 def test_summarize_rows_aggregates_heldout_gaps():
     rows = [
         {
+            "dataset": "cifar10",
             "kind": "fixed_pool",
             "condition": "fixed_pool_1k",
             "pool_size": "1000",
@@ -143,6 +166,7 @@ def test_summarize_rows_aggregates_heldout_gaps():
             "gaussian_minus_heldout_gap": "0.2",
         },
         {
+            "dataset": "stl10",
             "kind": "fixed_pool",
             "condition": "fixed_pool_1k",
             "pool_size": "1000",
@@ -158,7 +182,8 @@ def test_summarize_rows_aggregates_heldout_gaps():
 
     summary = summarize_rows(rows)
 
-    assert len(summary) == 1
-    assert summary[0]["train_noise_loss_mean"] == "0.15"
-    assert summary[0]["heldout_pool_gap_mean"] == "0.3"
-    assert summary[0]["fresh_gaussian_gap_mean"] == "0.5"
+    assert len(summary) == 2
+    assert [row["dataset"] for row in summary] == ["cifar10", "stl10"]
+    assert [row["train_noise_loss_mean"] for row in summary] == ["0.1", "0.2"]
+    assert [row["heldout_pool_gap_mean"] for row in summary] == ["0.2", "0.4"]
+    assert [row["fresh_gaussian_gap_mean"] for row in summary] == ["0.4", "0.6"]

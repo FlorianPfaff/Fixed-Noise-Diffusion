@@ -163,7 +163,64 @@ def _series_legend_label(dataset: str, series: str) -> str:
     return f"{dataset} / {series}" if dataset else series
 
 
-def plot_phase_diagram(rows: list[dict[str, str]], output: Path) -> None:
+def _row_epoch(row: dict[str, str]) -> int | None:
+    raw = row.get("epoch", "")
+    if raw in ("", None):
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def select_plot_rows(
+    rows: list[dict[str, str]], epoch: int | None = None
+) -> list[dict[str, str]]:
+    if epoch is not None:
+        return [row for row in rows if _row_epoch(row) == int(epoch)]
+
+    latest_by_condition: dict[tuple[str, str, str, str], tuple[int, dict[str, str]]] = {}
+    rows_without_epoch: list[dict[str, str]] = []
+    for row in rows:
+        row_epoch = _row_epoch(row)
+        if row_epoch is None:
+            rows_without_epoch.append(row)
+            continue
+        key = (
+            row.get("series", ""),
+            row.get("kind", ""),
+            row.get("condition", ""),
+            row.get("pool_size", ""),
+        )
+        previous = latest_by_condition.get(key)
+        if previous is None or row_epoch > previous[0]:
+            latest_by_condition[key] = (row_epoch, row)
+
+    selected = [item[1] for item in latest_by_condition.values()]
+    selected.extend(rows_without_epoch)
+    return sorted(
+        selected,
+        key=lambda row: (
+            row["model"],
+            row["schedule"],
+            row["series"],
+            int(row["pool_size"]) if row["pool_size"] else 10**18,
+            row["condition"],
+        ),
+    )
+
+
+def parse_plot_epoch(raw: str) -> int | None:
+    normalized = str(raw).strip().lower()
+    if normalized in {"", "final", "latest"}:
+        return None
+    return int(normalized)
+
+
+def plot_phase_diagram(
+    rows: list[dict[str, str]], output: Path, *, epoch: int | None = None
+) -> None:
+    rows = select_plot_rows(rows, epoch)
     if not rows:
         return
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
@@ -227,6 +284,11 @@ def main() -> None:
     )
     parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     parser.add_argument("--prefix", default="wp2_phase_diagram")
+    parser.add_argument(
+        "--plot-epoch",
+        default="final",
+        help="Epoch to plot, or 'final'/'latest' for the latest row per series and condition.",
+    )
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args()
 
@@ -237,7 +299,11 @@ def main() -> None:
     rows = read_phase_rows(args.input)
     write_csv(output_dir / f"{args.prefix}_combined.csv", rows)
     if not args.no_plot:
-        plot_phase_diagram(rows, output_dir / f"{args.prefix}.png")
+        plot_phase_diagram(
+            rows,
+            output_dir / f"{args.prefix}.png",
+            epoch=parse_plot_epoch(args.plot_epoch),
+        )
 
 
 if __name__ == "__main__":

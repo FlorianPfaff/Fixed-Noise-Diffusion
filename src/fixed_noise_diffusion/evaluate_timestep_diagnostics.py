@@ -19,7 +19,7 @@ from .diffusion import GaussianDiffusion
 from .evaluate import denoising_loss_from_timesteps
 from .noise import GaussianNoiseSampler, make_noise_sampler
 from .plotting import save_figure
-from .summarize_sample_quality import condition_kind, condition_pool_size
+from .summarize_sample_quality import condition_kind, condition_pool_size, normalize_dataset_label
 from .sweep import add_common_sweep_eval_args, run_identity_from_config, select_run_dirs
 from .utils import (
     float_or_nan,
@@ -38,9 +38,12 @@ def _prepare_config(
     batches: int,
     data_dir: str | None,
     num_workers: int,
+    download_data: bool = False,
 ) -> dict[str, Any]:
     config = deepcopy(config)
     data_cfg = config["data"]
+    if download_data:
+        data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(batch_size)
     data_cfg["num_workers"] = int(num_workers)
     if data_dir is not None:
@@ -51,6 +54,12 @@ def _prepare_config(
         data_cfg["eval_subset_size"] = max(int(current_subset), requested)
     return config
 
+
+
+def _dataset_label(config: dict[str, Any]) -> str:
+    data_cfg = config.get("data", {})
+    dataset = data_cfg.get("dataset") if isinstance(data_cfg, dict) else None
+    return normalize_dataset_label(dataset)
 
 @torch.no_grad()
 def fixed_timestep_denoising_loss(
@@ -88,8 +97,14 @@ def evaluate_run(
     model, diffusion, config, step = load_checkpoint_model(run_dir, epochs[0], device)
     condition, run_seed = run_identity_from_config(run_dir, config)
     config = _prepare_config(
-        config, args.batch_size, args.batches, args.data_dir, args.num_workers
+        config,
+        args.batch_size,
+        args.batches,
+        args.data_dir,
+        args.num_workers,
+        download_data=bool(args.download_data),
     )
+    dataset = _dataset_label(config)
     seed = int(config["seed"])
     seed_everything(args.seed + seed + max(run_seed, 0) * 1000)
     loaders = make_dataloaders(config)
@@ -140,6 +155,7 @@ def evaluate_run(
             rows.append(
                 {
                     "run_name": run_dir.name,
+                    "dataset": dataset,
                     "condition": condition,
                     "kind": condition_kind(condition),
                     "pool_size": "" if info.pool_size is None else info.pool_size,
@@ -179,11 +195,12 @@ def _append_records(
 
 
 def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str], list[dict[str, Any]]]
+    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]]
     grouped = defaultdict(list)
     for row in rows:
         grouped[
             (
+                str(row.get("dataset", "")),
                 str(row["kind"]),
                 str(row["condition"]),
                 str(row.get("pool_size", "")),
@@ -193,12 +210,13 @@ def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
         ].append(row)
 
     summary: list[dict[str, str]] = []
-    for (kind, condition, pool_size, epoch, timestep), group in grouped.items():
+    for (dataset, kind, condition, pool_size, epoch, timestep), group in grouped.items():
         train_losses = [float_or_nan(row["train_noise_loss"]) for row in group]
         gaussian_losses = [float_or_nan(row["gaussian_noise_loss"]) for row in group]
         gaps = [float_or_nan(row["timestep_gap"]) for row in group]
         summary.append(
             {
+                "dataset": dataset,
                 "kind": kind,
                 "condition": condition,
                 "pool_size": pool_size,
@@ -216,6 +234,7 @@ def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sorted(
         summary,
         key=lambda row: (
+            row.get("dataset", ""),
             row["kind"],
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
@@ -225,9 +244,11 @@ def summarize_timestep_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     )
 
 
-def _condition_plot_key(item: tuple[str, list[dict[str, str]]]) -> tuple[str, int, str]:
-    condition = item[0]
-    return condition_kind(condition), condition_pool_size(condition) or 10**18, condition
+def _condition_plot_key(
+    item: tuple[tuple[str, str], list[dict[str, str]]],
+) -> tuple[str, str, int, str]:
+    dataset, condition = item[0]
+    return dataset, condition_kind(condition), condition_pool_size(condition) or 10**18, condition
 
 
 def _plot_label(condition: str) -> str:
@@ -239,18 +260,22 @@ def plot_timestep_gaps(summary: list[dict[str, str]], output: Path) -> None:
         return
     final_epoch = max(int(row["epoch"]) for row in summary)
     rows = [row for row in summary if int(row["epoch"]) == final_epoch]
-    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        grouped[row["condition"]].append(row)
+        grouped[(row.get("dataset", ""), row["condition"])].append(row)
 
     fig, axis = plt.subplots(figsize=(7, 4), constrained_layout=True)
-    for condition, group in sorted(grouped.items(), key=_condition_plot_key):
+    for (dataset, condition), group in sorted(grouped.items(), key=_condition_plot_key):
         group = sorted(group, key=lambda row: int(row["timestep"]))
         axis.plot(
             [int(row["timestep"]) for row in group],
             [float_or_nan(row["timestep_gap_mean"]) for row in group],
             marker="o",
-            label=_plot_label(condition),
+            label=(
+                _plot_label(condition)
+                if not dataset
+                else f"{dataset}: {_plot_label(condition)}"
+            ),
         )
     axis.axhline(0, color="black", linewidth=0.8)
     axis.set_xlabel("Diffusion timestep")
@@ -267,6 +292,12 @@ def main() -> None:
     )
     add_common_sweep_eval_args(parser, default_epochs="50,100")
     parser.add_argument("--timesteps", default="0,25,50,100,200,400,600,800,999")
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Allow torchvision dataset downloads during evaluation. By default, "
+        "the checkpoint config's data.download setting is preserved.",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir.expanduser()

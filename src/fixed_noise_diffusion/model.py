@@ -175,13 +175,26 @@ class UNet(nn.Module):
         return self.final_conv(x)
 
 
+
+def _validate_image_size(image_size: int, channel_mults: Sequence[int]) -> None:
+    if image_size < 1:
+        raise ValueError("data.image_size must be positive")
+    downsample_factor = 2 ** max(0, len(channel_mults) - 1)
+    if image_size < downsample_factor or image_size % downsample_factor != 0:
+        raise ValueError(
+            "data.image_size must be divisible by the UNet downsampling factor "
+            f"{downsample_factor} for model.channel_mults={list(channel_mults)!r}"
+        )
+
 def build_model(config: dict) -> UNet:
     data_cfg = config["data"]
     model_cfg = config["model"]
+    channel_mults = model_cfg["channel_mults"]
+    _validate_image_size(int(data_cfg["image_size"]), channel_mults)
     return UNet(
         image_channels=int(data_cfg["channels"]),
         base_channels=int(model_cfg["base_channels"]),
-        channel_mults=model_cfg["channel_mults"],
+        channel_mults=channel_mults,
         time_emb_dim=int(model_cfg["time_emb_dim"]),
         dropout=float(model_cfg["dropout"]),
     )

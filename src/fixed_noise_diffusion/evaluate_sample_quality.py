@@ -46,9 +46,12 @@ def _prepare_config(
     sample_steps: int,
     sampler: str,
     real_split: str,
+    download_data: bool = False,
 ) -> dict[str, Any]:
     data_cfg = config["data"]
     eval_cfg = config["evaluation"]
+    if download_data:
+        data_cfg["download"] = True
     data_cfg["eval_batch_size"] = int(sample_batch_size)
     if real_split == "val":
         if data_cfg.get("eval_subset_size") is None:
@@ -173,6 +176,7 @@ def evaluate_run_epoch(
         sample_steps=args.sample_steps,
         sampler=args.sampler,
         real_split=args.real_split,
+        download_data=bool(args.download_data),
     )
 
     requested_real_count = int(args.real_count or args.sample_count)
@@ -289,6 +293,12 @@ def main() -> None:
         choices=["val", "train"],
         default="val",
         help="CIFAR split to use for real FID/KID statistics.",
+    )
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Allow torchvision dataset downloads during evaluation. By default, "
+        "the checkpoint config's data.download setting is preserved.",
     )
     parser.add_argument("--sample-batch-size", type=int, default=256)
     parser.add_argument("--sample-steps", type=int, default=50)
