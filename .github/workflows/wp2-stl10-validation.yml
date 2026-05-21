@@ -24,7 +24,7 @@ name: WP2 STL-10 validation
       python_bin:
         description: "Python executable on the self-hosted runner; leave empty to auto-detect"
         required: false
-        default: "/home/florianpfaff/fixed-noise-diffusion-work/Fixed-Noise-Diffusion/.venv/bin/python"
+        default: ""
       cuda_visible_devices:
         description: "Optional CUDA_VISIBLE_DEVICES value; leave empty to use the runner default"
         required: false
