@@ -7,6 +7,30 @@ import torch
 from torch import nn
 
 
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from None
+    if parsed < 1 or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
+def _unit_interval_float(name: str, value: object) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite float in (0, 1), got {value!r}")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a finite float in (0, 1), got {value!r}") from None
+    if not math.isfinite(parsed) or not 0.0 < parsed < 1.0:
+        raise ValueError(f"{name} must be a finite float in (0, 1), got {value!r}")
+    return parsed
+
+
 def _linear_beta_schedule(
     timesteps: int, beta_start: float, beta_end: float
 ) -> torch.Tensor:
@@ -32,13 +56,17 @@ def _extract(
 class GaussianDiffusion:
     def __init__(
         self,
-        num_timesteps: int,
+        num_timesteps: object,
         beta_schedule: str,
-        beta_start: float,
-        beta_end: float,
+        beta_start: object,
+        beta_end: object,
         device: torch.device,
     ) -> None:
-        self.num_timesteps = int(num_timesteps)
+        self.num_timesteps = _positive_int("diffusion.num_timesteps", num_timesteps)
+        beta_start = _unit_interval_float("diffusion.beta_start", beta_start)
+        beta_end = _unit_interval_float("diffusion.beta_end", beta_end)
+        if beta_schedule == "linear" and beta_start >= beta_end:
+            raise ValueError("diffusion.beta_start must be less than diffusion.beta_end for linear schedule")
         if beta_schedule == "linear":
             betas = _linear_beta_schedule(self.num_timesteps, beta_start, beta_end)
         elif beta_schedule == "cosine":
@@ -80,10 +108,10 @@ class GaussianDiffusion:
     def from_config(cls, config: dict, device: torch.device) -> "GaussianDiffusion":
         cfg = config["diffusion"]
         return cls(
-            num_timesteps=int(cfg["num_timesteps"]),
+            num_timesteps=cfg["num_timesteps"],
             beta_schedule=str(cfg["beta_schedule"]),
-            beta_start=float(cfg["beta_start"]),
-            beta_end=float(cfg["beta_end"]),
+            beta_start=cfg["beta_start"],
+            beta_end=cfg["beta_end"],
             device=device,
         )
 

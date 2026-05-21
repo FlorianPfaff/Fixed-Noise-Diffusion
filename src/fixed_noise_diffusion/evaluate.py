@@ -158,6 +158,7 @@ def optional_fid_kid(
     if subset_size >= 2:
         try:
             kid = KernelInceptionDistance(
+                feature=64,
                 subset_size=subset_size, normalize=False
             ).to(device)
             kid.update(real_uint8, real=True)

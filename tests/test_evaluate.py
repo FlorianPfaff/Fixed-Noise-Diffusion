@@ -85,8 +85,9 @@ def test_optional_fid_kid_caps_kid_subset_size_by_smaller_batch(monkeypatch):
             return torch.tensor(12.0)
 
     class FakeKid:
-        def __init__(self, subset_size, normalize):
+        def __init__(self, feature, subset_size, normalize):
             subset_sizes.append(subset_size)
+            assert feature == 64
             assert normalize is False
 
         def to(self, device):
