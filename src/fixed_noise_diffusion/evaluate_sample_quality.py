@@ -13,7 +13,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
-from .checkpoints import load_checkpoint_model, parse_int_list
+from .checkpoints import load_checkpoint_model, parse_positive_int_list
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import _to_uint8
@@ -352,7 +352,7 @@ def main() -> None:
     output_dir = args.output_dir.expanduser().resolve()
     csv_path = output_dir / "sample_quality.csv"
     jsonl_path = output_dir / "sample_quality.jsonl"
-    epochs = parse_int_list(args.epochs)
+    epochs = parse_positive_int_list(args.epochs, name="--epochs")
 
     for run_dir in _select_runs(sweep_dir, args.run):
         for epoch in epochs:
