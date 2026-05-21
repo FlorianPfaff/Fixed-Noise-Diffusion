@@ -48,3 +48,37 @@ def test_build_model_rejects_nonpositive_time_embedding_dim():
 
     with pytest.raises(ValueError, match="time_emb_dim"):
         build_model(config)
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "match"),
+    [
+        ("data", "channels", 0, "data.channels"),
+        ("data", "channels", 1.5, "data.channels"),
+        ("data", "image_size", 32.5, "data.image_size"),
+        ("model", "base_channels", 0, "model.base_channels"),
+        ("model", "base_channels", True, "model.base_channels"),
+        ("model", "time_emb_dim", 1.5, "model.time_emb_dim"),
+        ("model", "dropout", -0.1, "model.dropout"),
+        ("model", "dropout", 1.1, "model.dropout"),
+        ("model", "dropout", float("nan"), "model.dropout"),
+    ],
+)
+def test_build_model_rejects_invalid_scalar_config_values(section, key, value, match):
+    config = _config(32)
+    config[section][key] = value
+
+    with pytest.raises(ValueError, match=match):
+        build_model(config)
+
+
+@pytest.mark.parametrize(
+    "channel_mults",
+    [[], [1, 0], [1, 1.5], [True], "12"],
+)
+def test_build_model_rejects_invalid_channel_mults(channel_mults):
+    config = _config(32)
+    config["model"]["channel_mults"] = channel_mults
+
+    with pytest.raises(ValueError, match="channel_mults"):
+        build_model(config)
