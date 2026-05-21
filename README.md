@@ -229,11 +229,10 @@ by default: metrics, config, run metadata, and run summary. It does not upload
 datasets, generated sample directories, or checkpoints. It uses a persistent
 dataset cache on the self-hosted runner and a file lock around the initial
 STL-10 download so the matrix jobs do not repeatedly download the dataset.
-By default it uses the runner-local virtual environment at
-`/home/florianpfaff/fixed-noise-diffusion-work/Fixed-Noise-Diffusion/.venv/bin/python`
-instead of `actions/setup-python`, because the latter can hang on the current
-self-hosted runners before training starts. Override the `python_bin` workflow
-input if a runner uses a different environment path.
+By default, the workflow auto-detects Python: it uses the `python_bin` workflow
+input if provided, otherwise a checkout-local `.venv/bin/python`, then
+`python3.12`, and finally `python3`. Override `python_bin` only when a runner
+needs a specific pre-existing environment.
 
 ## CelebA-64 Validation
 
@@ -329,6 +328,17 @@ py -3.12 -m fixed_noise_diffusion.train --config cifar10_fixed_pool_1k.yaml `
 
 This adds `heldout_pool_den_loss`, `heldout_pool_gap`, and
 `gaussian_minus_heldout_gap` to eval rows. Gaussian runs ignore this option.
+
+Estimate finite-pool exposure before or after a run:
+
+```powershell
+py -3.12 -m fixed_noise_diffusion.pool_exposure --pool-size 10000 --draws 500000
+```
+
+This reports the expected number and fraction of unique pool entries used, the
+expected duplicate-draw fraction, and the average draws per pool entry under iid
+sampling with replacement. For a standard training run with `drop_last=True`, an
+approximate draw count is `epochs * floor(train_size / batch_size) * batch_size`.
 
 ## Key Diagnostic
 
