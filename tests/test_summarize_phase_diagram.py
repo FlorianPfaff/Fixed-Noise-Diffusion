@@ -138,6 +138,38 @@ def test_select_plot_rows_defaults_to_latest_epoch_per_condition():
     ]
 
 
+def test_select_plot_rows_keeps_metric_protocols_separate():
+    rows = [
+        {
+            "series": "cosine",
+            "schedule": "cosine",
+            "model": "base64",
+            "condition": "fixed_pool_1k",
+            "kind": "fixed_pool",
+            "pool_size": "1000",
+            "sample_count": "2048",
+            "epoch": "50",
+        },
+        {
+            "series": "cosine",
+            "schedule": "cosine",
+            "model": "base64",
+            "condition": "fixed_pool_1k",
+            "kind": "fixed_pool",
+            "pool_size": "1000",
+            "sample_count": "4096",
+            "epoch": "100",
+        },
+    ]
+
+    selected = select_plot_rows(rows)
+
+    assert [(row["sample_count"], row["epoch"]) for row in selected] == [
+        ("2048", "50"),
+        ("4096", "100"),
+    ]
+
+
 def test_select_plot_rows_can_filter_explicit_epoch():
     rows = [
         {"condition": "fixed_pool_1k", "epoch": "50"},

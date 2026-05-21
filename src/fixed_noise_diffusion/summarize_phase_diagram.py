@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from .plotting import save_figure
 from .summarize_sample_quality import (
+    QUALITY_PROTOCOL_COLUMNS,
     condition_kind,
     condition_pool_size,
     normalize_dataset_label,
@@ -21,6 +22,17 @@ METRIC_COLUMNS = [
     "denoising_gap_mean",
     "low_mid_mean_timestep_gap",
 ]
+
+PROTOCOL_COLUMNS = (
+    *QUALITY_PROTOCOL_COLUMNS,
+    "beta_schedule",
+    "num_timesteps",
+    "image_size",
+    "channels",
+    "base_channels",
+    "channel_mults",
+    "time_emb_dim",
+)
 
 
 def parse_input_spec(spec: str) -> tuple[str, Path]:
@@ -77,6 +89,10 @@ def _kind_from_row(row: dict[str, str], condition: str) -> str:
     return condition_kind(condition)
 
 
+def _protocol_key(row: dict[str, str]) -> tuple[str, ...]:
+    return tuple("" if row.get(column) is None else str(row.get(column, "")) for column in PROTOCOL_COLUMNS)
+
+
 def normalize_summary_row(
     row: dict[str, str], label: str, source_path: Path
 ) -> dict[str, str]:
@@ -101,6 +117,8 @@ def normalize_summary_row(
         normalized[column] = format_float(float_or_nan(value))
     for column in ("fid_std", "denoising_gap_std"):
         normalized[column] = format_float(float_or_nan(row.get(column, "")))
+    for column in PROTOCOL_COLUMNS:
+        normalized[column] = "" if row.get(column) is None else str(row.get(column, ""))
     return normalized
 
 
@@ -119,6 +137,7 @@ def read_phase_rows(input_specs: list[str]) -> list[dict[str, str]]:
             row["schedule"],
             row["dataset"],
             row["series"],
+            _protocol_key(row),
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
         ),
@@ -159,8 +178,60 @@ def _series_groups(
     return groups
 
 
+def _series_protocol_groups(
+    rows: list[dict[str, str]],
+) -> dict[tuple[str, str, str, str, tuple[str, ...]], list[dict[str, str]]]:
+    groups: dict[tuple[str, str, str, str, tuple[str, ...]], list[dict[str, str]]] = {}
+    for row in rows:
+        dataset = normalize_dataset_label(row.get("dataset"))
+        groups.setdefault(
+            (
+                dataset,
+                row.get("model", ""),
+                row.get("schedule", ""),
+                row["series"],
+                _protocol_key(row),
+            ),
+            [],
+        ).append(row)
+    return groups
+
+
 def _series_legend_label(dataset: str, series: str) -> str:
     return f"{dataset} / {series}" if dataset else series
+
+
+def _series_protocol_legend_label(
+    dataset: str,
+    model: str,
+    schedule: str,
+    series: str,
+    protocol_key: tuple[str, ...],
+) -> str:
+    label = _series_legend_label(dataset, series)
+    extras = [value for value in (model, schedule) if value and value not in label]
+    if extras:
+        label = f"{label} [{'/'.join(extras)}]"
+    protocol = {
+        column: value
+        for column, value in zip(PROTOCOL_COLUMNS, protocol_key, strict=True)
+        if value
+    }
+    if not protocol:
+        return label
+    selected = (
+        "sample_count",
+        "requested_real_count",
+        "real_split",
+        "sample_steps",
+        "sampler",
+        "fid_feature",
+        "kid_subset_size",
+    )
+    protocol_label = ", ".join(
+        f"{column}={protocol[column]}" for column in selected if column in protocol
+    )
+    return label if not protocol_label else f"{label} ({protocol_label})"
 
 
 def _row_epoch(row: dict[str, str]) -> int | None:
@@ -179,7 +250,10 @@ def select_plot_rows(
     if epoch is not None:
         return [row for row in rows if _row_epoch(row) == int(epoch)]
 
-    latest_by_condition: dict[tuple[str, str, str, str], tuple[int, dict[str, str]]] = {}
+    latest_by_condition: dict[
+        tuple[str, str, str, str, str, str, str, tuple[str, ...]],
+        tuple[int, dict[str, str]],
+    ] = {}
     rows_without_epoch: list[dict[str, str]] = []
     for row in rows:
         row_epoch = _row_epoch(row)
@@ -188,9 +262,13 @@ def select_plot_rows(
             continue
         key = (
             row.get("series", ""),
+            row.get("dataset", ""),
+            row.get("model", ""),
+            row.get("schedule", ""),
             row.get("kind", ""),
             row.get("condition", ""),
             row.get("pool_size", ""),
+            _protocol_key(row),
         )
         previous = latest_by_condition.get(key)
         if previous is None or row_epoch > previous[0]:
@@ -201,9 +279,11 @@ def select_plot_rows(
     return sorted(
         selected,
         key=lambda row: (
+            row.get("dataset", ""),
             row["model"],
             row["schedule"],
             row["series"],
+            _protocol_key(row),
             int(row["pool_size"]) if row["pool_size"] else 10**18,
             row["condition"],
         ),
@@ -231,8 +311,8 @@ def plot_phase_diagram(
     ]
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for axis, (metric, title) in zip(axes, metric_titles):
-        for index, ((dataset, series), group) in enumerate(
-            sorted(_series_groups(rows).items())
+        for index, ((dataset, model, schedule, series, protocol_key), group) in enumerate(
+            sorted(_series_protocol_groups(rows).items())
         ):
             color = colors[index % len(colors)]
             fixed = [row for row in group if _is_fixed_pool_row(row)]
@@ -248,7 +328,7 @@ def plot_phase_diagram(
                     yerr=y_errors if has_errors else None,
                     marker="o",
                     capsize=3 if has_errors else 0,
-                    label=_series_legend_label(dataset, series),
+                    label=_series_protocol_legend_label(dataset, model, schedule, series, protocol_key),
                     color=color,
                 )
             gaussian = [

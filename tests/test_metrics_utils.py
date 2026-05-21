@@ -23,3 +23,8 @@ def test_effective_kid_subset_size_rejects_zero_real_count() -> None:
 def test_effective_kid_subset_size_rejects_zero_sample_count() -> None:
     with pytest.raises(ValueError, match="sample_count"):
         effective_kid_subset_size(kid_subset_size=100, sample_count=0, real_count=None)
+
+
+def test_effective_kid_subset_size_rejects_too_small_kid_subset_size() -> None:
+    with pytest.raises(ValueError, match="kid_subset_size"):
+        effective_kid_subset_size(kid_subset_size=1, sample_count=64, real_count=64)
