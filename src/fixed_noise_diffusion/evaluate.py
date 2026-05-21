@@ -16,6 +16,18 @@ from .utils import generator_for
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
 
 
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from None
+    if parsed < 1 or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
 @torch.no_grad()
 def denoising_loss_from_timesteps(
     model: nn.Module,
@@ -100,6 +112,13 @@ def sample_grid(
     if count <= 0:
         return torch.empty(0)
 
+    sample_steps = _positive_int("evaluation.sample_steps", eval_cfg["sample_steps"])
+    if sample_steps > int(diffusion.num_timesteps):
+        raise ValueError(
+            "evaluation.sample_steps must not exceed diffusion.num_timesteps; "
+            f"got sample_steps={sample_steps} and num_timesteps={diffusion.num_timesteps}"
+        )
+
     from torchvision.utils import save_image
 
     generator = generator_for(device, seed)
@@ -114,7 +133,7 @@ def sample_grid(
         model,
         shape=shape,
         sampler=str(eval_cfg["sampler"]),
-        steps=int(eval_cfg["sample_steps"]),
+        steps=sample_steps,
         generator=generator,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,11 +149,14 @@ def optional_fid_kid(
     fake_images: torch.Tensor,
     device: torch.device,
     strict: bool = False,
-) -> dict[str, float | str | None]:
-    def empty_metrics(error: str | None = None) -> dict[str, float | str | None]:
-        return {"fid": None, "kid_mean": None, "kid_std": None, "metrics_error": error}
+    feature: int = 64,
+) -> dict[str, float | int | str | None]:
+    feature = _positive_int("evaluation.fid_feature", feature)
 
-    def failed_metrics(message: str) -> dict[str, float | str | None]:
+    def empty_metrics(error: str | None = None) -> dict[str, float | int | str | None]:
+        return {"fid": None, "kid_mean": None, "kid_std": None, "fid_feature": feature, "metrics_error": error}
+
+    def failed_metrics(message: str) -> dict[str, float | int | str | None]:
         if strict:
             raise RuntimeError(message)
         return empty_metrics(message)
@@ -163,7 +185,7 @@ def optional_fid_kid(
     fid_value: float | None = None
     errors: list[str] = []
     try:
-        fid = FrechetInceptionDistance(feature=64, normalize=False).to(device)
+        fid = FrechetInceptionDistance(feature=feature, normalize=False).to(device)
         fid.update(real_uint8, real=True)
         fid.update(fake_uint8, real=False)
         fid_value = float(fid.compute().item())
@@ -177,7 +199,7 @@ def optional_fid_kid(
     if subset_size >= 2:
         try:
             kid = KernelInceptionDistance(
-                feature=64,
+                feature=feature,
                 subset_size=subset_size, normalize=False
             ).to(device)
             kid.update(real_uint8, real=True)
@@ -198,6 +220,7 @@ def optional_fid_kid(
         "fid": fid_value,
         "kid_mean": kid_mean_value,
         "kid_std": kid_std_value,
+        "fid_feature": feature,
         "metrics_error": metrics_error,
     }
 

@@ -216,10 +216,17 @@ def evaluate_checkpoint(
         samples_path,
         seed + 50_000 + epoch,
     )
-    metrics: dict[str, float | str | None] = {"fid": None, "kid_mean": None, "kid_std": None, "metrics_error": None}
+    fid_feature = int(eval_cfg.get("fid_feature", 64))
+    metrics: dict[str, float | int | str | None] = {
+        "fid": None,
+        "kid_mean": None,
+        "kid_std": None,
+        "fid_feature": fid_feature,
+        "metrics_error": None,
+    }
     if bool(eval_cfg.get("enable_metrics", False)) and samples.numel() > 0:
         real = collect_real_images(loaders.val, device, samples.shape[0])
-        metrics = optional_fid_kid(real, samples, device, strict=True)
+        metrics = optional_fid_kid(real, samples, device, strict=True, feature=fid_feature)
 
     info = train_noise_sampler.info
     record = {
