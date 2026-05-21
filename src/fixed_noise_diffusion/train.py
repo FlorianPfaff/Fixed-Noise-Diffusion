@@ -51,6 +51,11 @@ def _pool_exposure_record(train_noise_sampler) -> dict[str, Any]:
     return {}
 
 
+def _pool_exposure_summary(train_noise_sampler) -> dict[str, Any] | None:
+    exposure = _pool_exposure_record(train_noise_sampler)
+    return exposure if exposure else None
+
+
 def _save_checkpoint(
     run_dir: Path,
     epoch: int,
@@ -468,6 +473,7 @@ def train(config: dict[str, Any]) -> Path:
         seconds=elapsed,
         noise_info=train_noise_sampler.info,
         last_eval=last_eval_record,
+        pool_exposure=_pool_exposure_summary(train_noise_sampler),
     )
     write_json(run_dir / "run_summary.json", summary)
     return run_dir
