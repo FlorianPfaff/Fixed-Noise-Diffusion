@@ -120,6 +120,8 @@ class FixedPoolNoiseSampler:
         self.dtype = _parse_pool_dtype(dtype)
         self.chunk_size = _positive_int("pool_chunk_size", chunk_size)
         self.whiten = bool(whiten)
+        if self.whiten and self.pool_size < 2:
+            raise ValueError("pool_size must be at least 2 for whitened fixed pools")
         self.index_generator = torch.Generator(device="cpu")
         self.index_generator.manual_seed(self.index_seed)
 
