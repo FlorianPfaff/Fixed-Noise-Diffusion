@@ -16,6 +16,18 @@ from .utils import generator_for
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
 
 
+def _at_least_int(name: str, value: object, minimum: int) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be at least {minimum}, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be at least {minimum}, got {value!r}") from None
+    if parsed < minimum or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be at least {minimum}, got {value!r}")
+    return parsed
+
+
 @torch.no_grad()
 def denoising_loss_from_timesteps(
     model: nn.Module,
@@ -26,11 +38,12 @@ def denoising_loss_from_timesteps(
     batches: int,
     make_timesteps: Callable[[int], torch.Tensor],
 ) -> tuple[float, int]:
+    batches = _at_least_int("evaluation.denoising_batches", batches, 1)
     model.eval()
     total_loss = 0.0
     total_count = 0
     for batch_index, (images, _) in enumerate(loader):
-        if batch_index >= int(batches):
+        if batch_index >= batches:
             break
         images = images.to(device, non_blocking=True)
         batch_size = int(images.shape[0])
@@ -96,9 +109,10 @@ def sample_grid(
 ) -> torch.Tensor:
     eval_cfg = config["evaluation"]
     data_cfg = config["data"]
-    count = int(eval_cfg["sample_count"])
-    if count <= 0:
+    count = _at_least_int("evaluation.sample_count", eval_cfg["sample_count"], 0)
+    if count == 0:
         return torch.empty(0)
+    sample_steps = _at_least_int("evaluation.sample_steps", eval_cfg["sample_steps"], 1)
 
     from torchvision.utils import save_image
 
@@ -114,7 +128,7 @@ def sample_grid(
         model,
         shape=shape,
         sampler=str(eval_cfg["sampler"]),
-        steps=int(eval_cfg["sample_steps"]),
+        steps=sample_steps,
         generator=generator,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
