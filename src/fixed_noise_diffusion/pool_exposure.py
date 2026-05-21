@@ -17,6 +17,8 @@ def expected_fixed_pool_exposure(pool_size: int, draws: int) -> dict[str, float 
 
     if draws == 0:
         expected_unique = 0.0
+    elif pool_size == 1:
+        expected_unique = 1.0
     else:
         expected_unique = pool_size * -math.expm1(draws * math.log1p(-1.0 / pool_size))
     expected_unique_fraction = expected_unique / pool_size
