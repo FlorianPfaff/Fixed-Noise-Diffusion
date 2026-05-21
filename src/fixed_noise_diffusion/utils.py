@@ -134,14 +134,18 @@ def write_csv_rows(
     rows: Sequence[Mapping[str, Any]],
     fieldnames: Sequence[str] | None = None,
 ) -> None:
-    if not rows:
-        raise ValueError(f"No rows to write to {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    columns = list(rows[0]) if fieldnames is None else list(fieldnames)
+    if rows:
+        columns = list(rows[0]) if fieldnames is None else list(fieldnames)
+    else:
+        columns = [] if fieldnames is None else list(fieldnames)
     with path.open("w", newline="", encoding="utf-8") as handle:
+        if not columns:
+            return
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
-        writer.writerows(rows)
+        if rows:
+            writer.writerows(rows)
 
 
 @contextmanager

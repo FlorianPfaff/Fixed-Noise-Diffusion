@@ -427,6 +427,29 @@ def _plot_title(base_title: str, protocol_key: tuple[str, ...]) -> str:
     return f"{base_title}\n{protocol}"
 
 
+def _plot_output_slug(dataset: str, protocol_key: tuple[str, ...]) -> str:
+    parts = [dataset] if dataset else ["dataset-unspecified"]
+    parts.extend(
+        f"{column}-{value}"
+        for column, value in zip(QUALITY_PROTOCOL_COLUMNS, protocol_key, strict=True)
+        if value
+    )
+    slug = "_".join(
+        re.sub(r"[^A-Za-z0-9]+", "-", part).strip("-").lower() for part in parts
+    )
+    return slug or "protocol"
+
+
+def _protocol_plot_output(output: Path, dataset: str, protocol_key: tuple[str, ...]) -> Path:
+    return output.with_name(f"{output.stem}_{_plot_output_slug(dataset, protocol_key)}{output.suffix}")
+
+
+def _multiple_protocols(
+    groups: list[tuple[str, tuple[str, ...], list[dict[str, str]]]],
+) -> bool:
+    return len({protocol_key for _, protocol_key, _ in groups}) > 1
+
+
 def _plot_fid_by_pool_axis(
     axis,
     dataset: str,
@@ -507,6 +530,16 @@ def _plot_fid_by_pool_single(
         )
     ]
     if not groups:
+        return
+
+    if _multiple_protocols(groups):
+        if output.exists():
+            output.unlink()
+        for dataset, protocol_key, rows in groups:
+            plot_fid_by_pool(
+                rows,
+                _protocol_plot_output(output, dataset, protocol_key),
+            )
         return
 
     fig, axes = _dataset_axes(len(groups), width=7, height_per_group=4)
@@ -611,6 +644,16 @@ def _plot_fid_vs_gap_single(
         )
     ]
     if not groups:
+        return
+
+    if _multiple_protocols(groups):
+        if output.exists():
+            output.unlink()
+        for dataset, protocol_key, rows in groups:
+            plot_fid_vs_gap(
+                rows,
+                _protocol_plot_output(output, dataset, protocol_key),
+            )
         return
 
     fig, axes = _dataset_axes(len(groups), width=6, height_per_group=4)
