@@ -7,6 +7,7 @@ from fixed_noise_diffusion.utils import (
     normalize_seed,
     resolve_device,
     seed_everything,
+    write_csv_rows,
 )
 
 
@@ -97,6 +98,22 @@ def test_make_run_dir_overwrite_does_not_delete_parent_escape(tmp_path):
         make_run_dir(tmp_path / "runs", "../outside", overwrite=True)
 
     assert marker.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_write_csv_rows_allows_empty_rows_with_header(tmp_path):
+    output = tmp_path / "empty.csv"
+
+    write_csv_rows(output, [], fieldnames=["a", "b"])
+
+    assert output.read_text(encoding="utf-8") == "a,b\n"
+
+
+def test_write_csv_rows_allows_empty_rows_without_header(tmp_path):
+    output = tmp_path / "empty.csv"
+
+    write_csv_rows(output, [])
+
+    assert output.read_text(encoding="utf-8") == ""
 
 
 def test_resolve_device_falls_back_for_indexed_cuda(monkeypatch):

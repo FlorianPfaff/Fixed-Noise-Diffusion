@@ -321,6 +321,75 @@ def test_fid_by_pool_plot_handles_multiple_datasets_in_one_output(tmp_path):
     assert not (tmp_path / "fid_by_pool_stl10.png").exists()
 
 
+def test_fid_by_pool_plot_splits_multiple_metric_protocols(tmp_path):
+    output = tmp_path / "fid_by_pool.png"
+
+    def row(kind, condition, pool_size, sample_count, fid):
+        return {
+            "dataset": "cifar10",
+            "kind": kind,
+            "condition": condition,
+            "pool_size": pool_size,
+            "epoch": "50",
+            "sample_count": str(sample_count),
+            "requested_real_count": str(sample_count),
+            "real_count": str(sample_count),
+            "fake_count": str(sample_count),
+            "real_split": "val",
+            "sample_steps": "50",
+            "sampler": "ddim",
+            "fid_feature": "64",
+            "kid_subset_size": "100",
+            "n": "1",
+            "fid_mean": str(fid),
+            "fid_std": "0.5",
+        }
+
+    plot_fid_by_pool(
+        [
+            row("fixed_pool", "fixed_pool_1k", "1000", 2048, 12),
+            row("gaussian", "gaussian", "", 2048, 15),
+            row("fixed_pool", "fixed_pool_1k", "1000", 4096, 10),
+            row("gaussian", "gaussian", "", 4096, 14),
+        ],
+        output,
+    )
+
+    assert not output.exists()
+    assert len(list(tmp_path.glob("fid_by_pool_*.png"))) == 2
+
+
+def test_fid_vs_gap_plot_splits_multiple_metric_protocols(tmp_path):
+    output = tmp_path / "fid_vs_gap.png"
+
+    def row(sample_count, fid, gap):
+        return {
+            "dataset": "cifar10",
+            "kind": "fixed_pool",
+            "condition": "fixed_pool_1k",
+            "pool_size": "1000",
+            "epoch": "50",
+            "sample_count": str(sample_count),
+            "requested_real_count": str(sample_count),
+            "real_count": str(sample_count),
+            "fake_count": str(sample_count),
+            "real_split": "val",
+            "sample_steps": "50",
+            "sampler": "ddim",
+            "fid_feature": "64",
+            "kid_subset_size": "100",
+            "n": "1",
+            "fid_mean": str(fid),
+            "fid_std": "0.5",
+            "denoising_gap_mean": str(gap),
+        }
+
+    plot_fid_vs_gap([row(2048, 12, 0.12), row(4096, 10, 0.09)], output)
+
+    assert not output.exists()
+    assert len(list(tmp_path.glob("fid_vs_gap_*.png"))) == 2
+
+
 def test_fid_vs_gap_plot_handles_multiple_datasets_in_one_output(tmp_path):
     output = tmp_path / "fid_vs_gap.png"
     plot_fid_vs_gap(

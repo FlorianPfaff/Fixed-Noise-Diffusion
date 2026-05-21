@@ -63,10 +63,13 @@ def test_metric_population_count_requires_two_images_for_metrics() -> None:
         _metric_population_count("--sample-count", 1)
 
 
-def test_positive_cli_int_rejects_zero_sample_batch_size() -> None:
-    assert _positive_cli_int("--sample-batch-size", 1) == 1
-    with pytest.raises(ValueError, match="--sample-batch-size"):
-        _positive_cli_int("--sample-batch-size", 0)
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("--sample-batch-size", 0), ("--sample-batch-size", -1), ("--sample-steps", 0)],
+)
+def test_positive_cli_int_rejects_nonpositive_values(name, value) -> None:
+    with pytest.raises(ValueError, match=name):
+        _positive_cli_int(name, value)
 
 
 def test_nonnegative_cli_int_allows_zero_grid_count_only() -> None:
