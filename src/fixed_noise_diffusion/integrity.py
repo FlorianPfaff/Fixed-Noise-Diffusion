@@ -168,6 +168,7 @@ def build_run_summary(
     seconds: float,
     noise_info: NoiseInfo,
     last_eval: dict[str, Any] | None,
+    pool_exposure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -182,6 +183,7 @@ def build_run_summary(
         "final_step": int(final_step),
         "seconds": round(float(seconds), 3),
         "noise": noise_metadata(noise_info),
+        "pool_exposure": pool_exposure,
         "last_eval": last_eval,
         "artifacts": {
             "config": str(run_dir / "config.yaml"),

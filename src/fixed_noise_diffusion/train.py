@@ -45,6 +45,17 @@ def _pool_fingerprint_for_checkpoint(train_noise_sampler) -> dict[str, Any] | No
     return None
 
 
+def _pool_exposure_record(train_noise_sampler) -> dict[str, Any]:
+    if isinstance(train_noise_sampler, FixedPoolNoiseSampler):
+        return train_noise_sampler.exposure_summary()
+    return {}
+
+
+def _pool_exposure_summary(train_noise_sampler) -> dict[str, Any] | None:
+    exposure = _pool_exposure_record(train_noise_sampler)
+    return exposure if exposure else None
+
+
 def _save_checkpoint(
     run_dir: Path,
     epoch: int,
@@ -255,6 +266,7 @@ def evaluate_checkpoint(
         "heldout_pool_seed": heldout_pool_seed,
         "samples_path": str(samples_path),
         "seconds": round(timer.elapsed(), 3),
+        **_pool_exposure_record(train_noise_sampler),
         **metrics,
     }
     logger.log(record)
@@ -292,7 +304,9 @@ def train(config: dict[str, Any]) -> Path:
     _require_train_batches(len(loaders.train))
     model = build_model(config).to(device)
     diffusion = GaussianDiffusion.from_config(config, device)
-    train_noise_sampler = make_noise_sampler(config, device, purpose_seed_offset=0)
+    train_noise_sampler = make_noise_sampler(
+        config, device, purpose_seed_offset=0, track_exposure=True
+    )
     heldout_noise_sampler = make_heldout_pool_sampler(
         config, train_noise_sampler, device
     )
@@ -323,6 +337,7 @@ def train(config: dict[str, Any]) -> Path:
             "seconds": 0.0,
             "loss": None,
             "lr": float(config["training"]["lr"]),
+            **_pool_exposure_record(train_noise_sampler),
         }
     )
     print(
@@ -399,6 +414,7 @@ def train(config: dict[str, Any]) -> Path:
                                 train_noise_sampler.info.pool_memory_mb, 3
                             ),
                             "seconds": round(timer.elapsed(), 3),
+                            **_pool_exposure_record(train_noise_sampler),
                         }
                     )
                     progress.set_postfix(loss=f"{step_loss:.4f}")
@@ -445,6 +461,7 @@ def train(config: dict[str, Any]) -> Path:
             "noise_mode": train_noise_sampler.info.mode,
             "pool_size": train_noise_sampler.info.pool_size,
             "pool_memory_mb": round(train_noise_sampler.info.pool_memory_mb, 3),
+            **_pool_exposure_record(train_noise_sampler),
         }
     )
     summary = build_run_summary(
@@ -456,6 +473,7 @@ def train(config: dict[str, Any]) -> Path:
         seconds=elapsed,
         noise_info=train_noise_sampler.info,
         last_eval=last_eval_record,
+        pool_exposure=_pool_exposure_summary(train_noise_sampler),
     )
     write_json(run_dir / "run_summary.json", summary)
     return run_dir

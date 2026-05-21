@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,6 +70,14 @@ def _validate_existing_pool(
     return existing_pool
 
 
+def _expected_unique_entries(pool_size: int, draws: int) -> float:
+    if draws == 0:
+        return 0.0
+    if pool_size == 1:
+        return 1.0
+    return pool_size * -math.expm1(draws * math.log1p(-1.0 / pool_size))
+
+
 @dataclass(frozen=True)
 class NoiseInfo:
     mode: str
@@ -111,6 +120,7 @@ class FixedPoolNoiseSampler:
         chunk_size: int = 8192,
         whiten: bool = False,
         existing_pool: torch.Tensor | None = None,
+        track_exposure: bool = False,
     ) -> None:
         self.image_shape = _validate_image_shape(image_shape)
         self.device = device
@@ -120,6 +130,7 @@ class FixedPoolNoiseSampler:
         self.dtype = _parse_pool_dtype(dtype)
         self.chunk_size = _positive_int("pool_chunk_size", chunk_size)
         self.whiten = bool(whiten)
+        self.track_exposure = bool(track_exposure)
         if self.whiten and self.pool_size < 2:
             raise ValueError(
                 "noise.pool_size must be at least 2 when fixed-pool whitening is enabled"
@@ -133,6 +144,11 @@ class FixedPoolNoiseSampler:
             self.pool = _validate_existing_pool(
                 existing_pool, self.pool_size, self.image_shape
             )
+        self.exposure_counts = (
+            torch.zeros(self.pool_size, dtype=torch.long, device="cpu")
+            if self.track_exposure
+            else None
+        )
         pool_memory_mb = self.pool.numel() * self.pool.element_size() / (1024**2)
         mode = "fixed_pool_whitened" if self.whiten else "fixed_pool"
         self.info = NoiseInfo(mode, self.pool_size, pool_memory_mb, self.whiten)
@@ -222,6 +238,37 @@ class FixedPoolNoiseSampler:
             hasher.update(row.view(torch.uint8).numpy().tobytes())
         return {**metadata, "sha256": hasher.hexdigest()}
 
+    def reset_exposure(self) -> None:
+        """Reset cumulative exposure counters without changing the index stream."""
+        if self.exposure_counts is not None:
+            self.exposure_counts.zero_()
+
+    def exposure_summary(self) -> dict[str, bool | float | int]:
+        """Return cumulative fixed-pool draw diagnostics for this sampler."""
+        if self.exposure_counts is None:
+            return {"pool_exposure_tracked": False}
+
+        counts = self.exposure_counts
+        draws = int(counts.sum().item())
+        unique_entries = int((counts > 0).sum().item())
+        expected_unique = _expected_unique_entries(self.pool_size, draws)
+        duplicate_draw_fraction = 0.0 if draws == 0 else max(0.0, 1.0 - unique_entries / draws)
+        expected_duplicate_draw_fraction = 0.0 if draws == 0 else max(0.0, 1.0 - expected_unique / draws)
+
+        return {
+            "pool_exposure_tracked": True,
+            "pool_draws": draws,
+            "pool_draws_per_entry": draws / self.pool_size,
+            "pool_unique_entries": unique_entries,
+            "pool_unseen_entries": self.pool_size - unique_entries,
+            "pool_unique_fraction": unique_entries / self.pool_size,
+            "pool_duplicate_draw_fraction": duplicate_draw_fraction,
+            "pool_expected_unique_entries": expected_unique,
+            "pool_expected_unique_fraction": expected_unique / self.pool_size,
+            "pool_expected_duplicate_draw_fraction": expected_duplicate_draw_fraction,
+            "pool_max_entry_draws": int(counts.max().item()),
+        }
+
     def sample(self, batch_size: int) -> torch.Tensor:
         indices = torch.randint(
             0,
@@ -230,13 +277,19 @@ class FixedPoolNoiseSampler:
             generator=self.index_generator,
             device="cpu",
         )
+        if self.exposure_counts is not None and indices.numel() > 0:
+            self.exposure_counts.scatter_add_(
+                0,
+                indices,
+                torch.ones_like(indices, dtype=self.exposure_counts.dtype),
+            )
         return self.pool.index_select(0, indices).to(
             device=self.device,
             dtype=torch.float32,
             non_blocking=True,
         )
 
-    def fork(self, seed: int) -> "FixedPoolNoiseSampler":
+    def fork(self, seed: int, track_exposure: bool = False) -> "FixedPoolNoiseSampler":
         return FixedPoolNoiseSampler(
             image_shape=self.image_shape,
             device=self.device,
@@ -247,6 +300,7 @@ class FixedPoolNoiseSampler:
             chunk_size=self.chunk_size,
             whiten=self.whiten,
             existing_pool=self.pool,
+            track_exposure=track_exposure,
         )
 
 
@@ -255,6 +309,7 @@ def make_noise_sampler(
     device: torch.device,
     purpose_seed_offset: int = 0,
     existing_pool_sampler: FixedPoolNoiseSampler | None = None,
+    track_exposure: bool = False,
 ) -> GaussianNoiseSampler | FixedPoolNoiseSampler:
     data_cfg = config["data"]
     noise_cfg = config["noise"]
@@ -272,7 +327,7 @@ def make_noise_sampler(
             raise ValueError("noise.pool_size is required for fixed_pool modes")
         whiten = bool(noise_cfg.get("whiten", False)) or mode == "fixed_pool_whitened"
         if existing_pool_sampler is not None:
-            return existing_pool_sampler.fork(seed)
+            return existing_pool_sampler.fork(seed, track_exposure=track_exposure)
         return FixedPoolNoiseSampler(
             image_shape=image_shape,
             device=device,
@@ -282,5 +337,6 @@ def make_noise_sampler(
             dtype=str(noise_cfg.get("pool_dtype", "float16")),
             chunk_size=noise_cfg.get("pool_chunk_size", 8192),
             whiten=whiten,
+            track_exposure=track_exposure,
         )
     raise ValueError(f"Unsupported noise mode {mode!r}")
