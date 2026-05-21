@@ -16,6 +16,11 @@ def _make_diffusion(**overrides):
     return GaussianDiffusion(**kwargs)
 
 
+class _ZeroModel(torch.nn.Module):
+    def forward(self, x, timesteps):
+        return torch.zeros_like(x)
+
+
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
@@ -54,3 +59,29 @@ def test_gaussian_diffusion_from_config_rejects_fractional_timesteps():
 
     with pytest.raises(ValueError, match="num_timesteps"):
         GaussianDiffusion.from_config(config, torch.device("cpu"))
+
+
+@pytest.mark.parametrize("steps", [0, -1, 11, 1.5, True])
+def test_ddim_sample_rejects_invalid_step_count(steps):
+    diffusion = _make_diffusion(num_timesteps=10)
+
+    with pytest.raises(ValueError, match="steps"):
+        diffusion.sample(
+            _ZeroModel(),
+            shape=(1, 1, 2, 2),
+            sampler="ddim",
+            steps=steps,
+        )
+
+
+def test_ddim_sample_accepts_full_horizon_step_count():
+    diffusion = _make_diffusion(num_timesteps=10)
+
+    samples = diffusion.sample(
+        _ZeroModel(),
+        shape=(1, 1, 2, 2),
+        sampler="ddim",
+        steps=10,
+    )
+
+    assert samples.shape == (1, 1, 2, 2)

@@ -202,7 +202,12 @@ class GaussianDiffusion:
         eta: float,
         generator: torch.Generator | None,
     ) -> torch.Tensor:
-        steps = max(1, min(int(steps), self.num_timesteps))
+        steps = _positive_int("sample.steps", steps)
+        if steps > self.num_timesteps:
+            raise ValueError(
+                "sample.steps must not exceed diffusion.num_timesteps; "
+                f"got steps={steps} and num_timesteps={self.num_timesteps}"
+            )
         times = torch.linspace(
             self.num_timesteps - 1,
             0,
