@@ -71,6 +71,9 @@ def test_training_writes_integrity_artifacts(tmp_path):
     assert summary["config_hash"] == metadata["config_hash"]
     assert summary["final_step"] == 1
     assert summary["last_eval"]["denoising_gap"] is not None
+    assert summary["pool_exposure"]["pool_exposure_tracked"] is True
+    assert summary["pool_exposure"]["pool_draws"] == 4
+    assert summary["pool_exposure"]["pool_unique_entries"] >= 1
 
 
 def test_tiny_training_reproducibility_key_metrics(tmp_path):
