@@ -28,6 +28,18 @@ def _positive_int(name: str, value: object) -> int:
     return parsed
 
 
+def _nonnegative_int(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a non-negative integer, got {value!r}") from None
+    if parsed < 0 or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+    return parsed
+
+
 @torch.no_grad()
 def denoising_loss_from_timesteps(
     model: nn.Module,
@@ -108,8 +120,8 @@ def sample_grid(
 ) -> torch.Tensor:
     eval_cfg = config["evaluation"]
     data_cfg = config["data"]
-    count = int(eval_cfg["sample_count"])
-    if count <= 0:
+    count = _nonnegative_int("evaluation.sample_count", eval_cfg["sample_count"])
+    if count == 0:
         return torch.empty(0)
 
     sample_steps = _positive_int("evaluation.sample_steps", eval_cfg["sample_steps"])
@@ -252,6 +264,5 @@ def collect_real_images(
 
 @torch.no_grad()
 def first_real_batch(
-    loader: DataLoader, device: torch.device, count: int
-) -> torch.Tensor:
+    loader: DataLoader, device: torch.device, count: int) -> torch.Tensor:
     return collect_real_images(loader, device, count)
