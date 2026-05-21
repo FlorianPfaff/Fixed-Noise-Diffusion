@@ -16,16 +16,23 @@ from .utils import generator_for
 NoiseSampler = GaussianNoiseSampler | FixedPoolNoiseSampler
 
 
-def _positive_int(name: str, value: object) -> int:
+def _integer_at_least(name: str, value: object, minimum: int) -> int:
     if isinstance(value, bool):
-        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+        raise ValueError(f"{name} must be an integer at least {minimum}, got {value!r}")
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a positive integer, got {value!r}") from None
-    if parsed < 1 or (isinstance(value, float) and not value.is_integer()):
-        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+        raise ValueError(f"{name} must be an integer at least {minimum}, got {value!r}") from None
+    if parsed < minimum or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be an integer at least {minimum}, got {value!r}")
     return parsed
+
+
+def _positive_int(name: str, value: object) -> int:
+    try:
+        return _integer_at_least(name, value, 1)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from exc
 
 
 @torch.no_grad()
@@ -38,11 +45,12 @@ def denoising_loss_from_timesteps(
     batches: int,
     make_timesteps: Callable[[int], torch.Tensor],
 ) -> tuple[float, int]:
+    batches = _positive_int("evaluation.denoising_batches", batches)
     model.eval()
     total_loss = 0.0
     total_count = 0
     for batch_index, (images, _) in enumerate(loader):
-        if batch_index >= int(batches):
+        if batch_index >= batches:
             break
         images = images.to(device, non_blocking=True)
         batch_size = int(images.shape[0])
@@ -108,8 +116,8 @@ def sample_grid(
 ) -> torch.Tensor:
     eval_cfg = config["evaluation"]
     data_cfg = config["data"]
-    count = int(eval_cfg["sample_count"])
-    if count <= 0:
+    count = _integer_at_least("evaluation.sample_count", eval_cfg["sample_count"], 0)
+    if count == 0:
         return torch.empty(0)
 
     sample_steps = _positive_int("evaluation.sample_steps", eval_cfg["sample_steps"])
