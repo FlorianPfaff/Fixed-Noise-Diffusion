@@ -38,9 +38,14 @@ class LoaderBundle:
 def _validated_subset_size(size: int | None, name: str) -> int | None:
     if size is None:
         return None
-    parsed = int(size)
-    if parsed < 0:
-        raise ValueError(f"data.{name} must be non-negative or null")
+    if isinstance(size, bool):
+        raise ValueError(f"data.{name} must be a non-negative integer or null")
+    try:
+        parsed = int(size)
+    except (TypeError, ValueError):
+        raise ValueError(f"data.{name} must be a non-negative integer or null") from None
+    if parsed < 0 or (isinstance(size, float) and not size.is_integer()):
+        raise ValueError(f"data.{name} must be a non-negative integer or null")
     return parsed
 
 

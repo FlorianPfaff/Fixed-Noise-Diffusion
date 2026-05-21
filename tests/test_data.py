@@ -61,3 +61,11 @@ def test_eval_subset_rejects_negative_size():
 
     with pytest.raises(ValueError, match="eval_subset_size"):
         _subset(dataset, -2, seed=0, name="eval_subset_size")
+
+
+@pytest.mark.parametrize("size", [1.5, True])
+def test_subset_rejects_non_integer_sizes(size):
+    dataset = RandomImageDataset(length=4, channels=1, image_size=2, seed=0)
+
+    with pytest.raises(ValueError, match="subset_size"):
+        _subset(dataset, size, seed=0, name="subset_size")
