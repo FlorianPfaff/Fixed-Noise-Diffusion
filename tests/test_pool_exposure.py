@@ -21,6 +21,14 @@ def test_expected_fixed_pool_exposure_one_draw():
     assert stats["expected_duplicate_draw_fraction"] == pytest.approx(0.0)
 
 
+def test_expected_fixed_pool_exposure_single_entry_pool():
+    stats = expected_fixed_pool_exposure(pool_size=1, draws=5)
+
+    assert stats["expected_unique_pool_entries"] == pytest.approx(1.0)
+    assert stats["expected_unique_pool_fraction"] == pytest.approx(1.0)
+    assert stats["expected_duplicate_draw_fraction"] == pytest.approx(0.8)
+
+
 def test_expected_fixed_pool_exposure_many_draws():
     stats = expected_fixed_pool_exposure(pool_size=10, draws=10)
 
