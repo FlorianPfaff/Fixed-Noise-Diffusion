@@ -1,3 +1,5 @@
+import pytest
+
 from fixed_noise_diffusion.summarize_pool_dtype_control import summarize
 
 
@@ -28,10 +30,10 @@ def test_dtype_control_summary_does_not_average_raw_and_whitened_protocols():
     }
 
     assert len(summary) == 4
-    assert by_protocol[("float16", "fixed_pool", False)]["denoising_gap_mean"] == 0.20
-    assert by_protocol[("float16", "fixed_pool", True)]["denoising_gap_mean"] == 0.80
-    assert by_protocol[("float32", "fixed_pool", False)]["float32_minus_float16_gap_mean"] == 0.05
-    assert by_protocol[("float16", "fixed_pool", True)]["float32_minus_float16_gap_mean"] == 0.10
+    assert by_protocol[("float16", "fixed_pool", False)]["denoising_gap_mean"] == pytest.approx(0.20)
+    assert by_protocol[("float16", "fixed_pool", True)]["denoising_gap_mean"] == pytest.approx(0.80)
+    assert by_protocol[("float32", "fixed_pool", False)]["float32_minus_float16_gap_mean"] == pytest.approx(0.05)
+    assert by_protocol[("float16", "fixed_pool", True)]["float32_minus_float16_gap_mean"] == pytest.approx(0.10)
 
 
 def test_dtype_control_summary_does_not_average_noise_modes():
