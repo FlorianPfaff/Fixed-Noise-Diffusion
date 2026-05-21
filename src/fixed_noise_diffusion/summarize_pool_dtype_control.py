@@ -42,8 +42,17 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _truthy(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
 def _noise_cfg(config: dict[str, Any]) -> dict[str, Any]:
     value = config.get("noise")
+    return value if isinstance(value, dict) else {}
+
+
+def _metadata_noise(metadata: dict[str, Any]) -> dict[str, Any]:
+    value = metadata.get("noise")
     return value if isinstance(value, dict) else {}
 
 
@@ -56,13 +65,45 @@ def _data_cfg(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any
 
 
 def _pool_size(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any]) -> int | None:
-    raw_meta_noise = metadata.get("noise")
-    meta_noise = raw_meta_noise if isinstance(raw_meta_noise, dict) else {}
+    meta_noise = _metadata_noise(metadata)
     for value in (row.get("pool_size"), meta_noise.get("pool_size"), _noise_cfg(config).get("pool_size")):
         parsed = _as_int(value)
         if parsed is not None:
             return parsed
     return None
+
+
+def _noise_mode(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any]) -> str:
+    noise_cfg = _noise_cfg(config)
+    meta_noise = _metadata_noise(metadata)
+    return str(row.get("noise_mode") or meta_noise.get("mode") or noise_cfg.get("mode") or "")
+
+
+def _is_whitened(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any], noise_mode: str) -> bool:
+    noise_cfg = _noise_cfg(config)
+    meta_noise = _metadata_noise(metadata)
+    return (
+        "whitened" in noise_mode
+        or _truthy(row.get("whitened"))
+        or _truthy(row.get("noise_whitened"))
+        or _truthy(meta_noise.get("whitened"))
+        or _truthy(noise_cfg.get("whiten"))
+    )
+
+
+def _pool_label(pool_size: int) -> str:
+    if pool_size >= 1000 and pool_size % 1000 == 0:
+        return f"{pool_size // 1000}k"
+    return str(pool_size)
+
+
+def _condition(noise_mode: str, pool_size: int, whitened: bool) -> str:
+    label = _pool_label(pool_size)
+    if noise_mode == "fixed_pool_whitened" or whitened:
+        return f"fixed_pool_whitened_{label}"
+    if noise_mode == "fixed_pool":
+        return f"fixed_pool_{label}"
+    return noise_mode or "unknown"
 
 
 def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
@@ -84,10 +125,15 @@ def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
             pool_size = _pool_size(config, metadata, row)
             if pool_size is None:
                 continue
+            noise_mode = _noise_mode(config, metadata, row)
+            whitened = _is_whitened(config, metadata, row, noise_mode)
             rows.append(
                 {
                     "run_name": config.get("run_name") or metadata.get("run_name") or summary.get("run_name") or run_dir.name,
                     "dataset": str(_data_cfg(config, metadata).get("dataset", "")).lower(),
+                    "condition": _condition(noise_mode, pool_size, whitened),
+                    "noise_mode": noise_mode,
+                    "whitened": whitened,
                     "seed": config.get("seed", metadata.get("seed", summary.get("seed", ""))),
                     "pool_size": pool_size,
                     "pool_dtype": dtype,
@@ -103,17 +149,24 @@ def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
 
 
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, int, int, str], list[float]] = defaultdict(list)
+    grouped: dict[tuple[str, str, int, int, str], list[float]] = defaultdict(list)
     for row in rows:
-        key = (str(row["dataset"]), int(row["pool_size"]), int(row["epoch"]), str(row["pool_dtype"]))
+        key = (
+            str(row["dataset"]),
+            str(row["condition"]),
+            int(row["pool_size"]),
+            int(row["epoch"]),
+            str(row["pool_dtype"]),
+        )
         grouped[key].append(float(row["denoising_gap"]))
 
     summary: list[dict[str, Any]] = []
-    for (dataset, pool_size, epoch, dtype), gaps in sorted(grouped.items()):
+    for (dataset, condition, pool_size, epoch, dtype), gaps in sorted(grouped.items()):
         gap_std = stdev(gaps) if len(gaps) > 1 else 0.0
         summary.append(
             {
                 "dataset": dataset,
+                "condition": condition,
                 "pool_size": pool_size,
                 "pool_dtype": dtype,
                 "epoch": epoch,
@@ -124,10 +177,10 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "float32_minus_float16_gap_mean": "",
             }
         )
-    by_key = {(row["dataset"], row["pool_size"], row["epoch"], row["pool_dtype"]): row for row in summary}
+    by_key = {(row["dataset"], row["condition"], row["pool_size"], row["epoch"], row["pool_dtype"]): row for row in summary}
     for row in summary:
         other_dtype = "float16" if row["pool_dtype"] == "float32" else "float32"
-        other = by_key.get((row["dataset"], row["pool_size"], row["epoch"], other_dtype))
+        other = by_key.get((row["dataset"], row["condition"], row["pool_size"], row["epoch"], other_dtype))
         if other is not None:
             float32 = row if row["pool_dtype"] == "float32" else other
             float16 = row if row["pool_dtype"] == "float16" else other
@@ -152,16 +205,20 @@ def plot_summary(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     fig, ax = plt.subplots(figsize=(6.2, 3.6), constrained_layout=True)
-    for dtype in sorted({row["pool_dtype"] for row in rows}):
-        dtype_rows = sorted((row for row in rows if row["pool_dtype"] == dtype), key=lambda row: int(row["pool_size"]))
-        ax.errorbar(
-            [int(row["pool_size"]) for row in dtype_rows],
-            [float(row["denoising_gap_mean"]) for row in dtype_rows],
-            yerr=[float(row["denoising_gap_std"]) for row in dtype_rows],
-            marker="o",
-            capsize=3,
-            label=dtype,
-        )
+    for condition in sorted({row["condition"] for row in rows}):
+        for dtype in sorted({row["pool_dtype"] for row in rows if row["condition"] == condition}):
+            dtype_rows = sorted(
+                (row for row in rows if row["condition"] == condition and row["pool_dtype"] == dtype),
+                key=lambda row: int(row["pool_size"]),
+            )
+            ax.errorbar(
+                [int(row["pool_size"]) for row in dtype_rows],
+                [float(row["denoising_gap_mean"]) for row in dtype_rows],
+                yerr=[float(row["denoising_gap_std"]) for row in dtype_rows],
+                marker="o",
+                capsize=3,
+                label=f"{condition} / {dtype}",
+            )
     ax.axhline(0.0, linewidth=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("Pool size M")
@@ -192,6 +249,9 @@ def main() -> None:
         [
             "run_name",
             "dataset",
+            "condition",
+            "noise_mode",
+            "whitened",
             "seed",
             "pool_size",
             "pool_dtype",
@@ -208,6 +268,7 @@ def main() -> None:
         summary_rows,
         [
             "dataset",
+            "condition",
             "pool_size",
             "pool_dtype",
             "epoch",
