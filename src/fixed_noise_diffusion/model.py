@@ -14,6 +14,41 @@ def _groups(channels: int) -> int:
     return 1
 
 
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from None
+    if parsed < 1 or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
+def _probability_float(name: str, value: object) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite float in [0, 1], got {value!r}")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a finite float in [0, 1], got {value!r}") from None
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be a finite float in [0, 1], got {value!r}")
+    return parsed
+
+
+def _validate_channel_mults(value: Sequence[int]) -> list[int]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError("model.channel_mults must be a non-empty sequence of positive integers")
+    if not value:
+        raise ValueError("model.channel_mults must contain at least one value")
+    return [
+        _positive_int(f"model.channel_mults[{index}]", mult)
+        for index, mult in enumerate(value)
+    ]
+
+
 class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
@@ -182,25 +217,26 @@ class UNet(nn.Module):
 
 
 
-def _validate_image_size(image_size: int, channel_mults: Sequence[int]) -> None:
-    if image_size < 1:
-        raise ValueError("data.image_size must be positive")
+def _validate_image_size(image_size: object, channel_mults: Sequence[int]) -> int:
+    image_size = _positive_int("data.image_size", image_size)
     downsample_factor = 2 ** max(0, len(channel_mults) - 1)
     if image_size < downsample_factor or image_size % downsample_factor != 0:
         raise ValueError(
             "data.image_size must be divisible by the UNet downsampling factor "
             f"{downsample_factor} for model.channel_mults={list(channel_mults)!r}"
         )
+    return image_size
+
 
 def build_model(config: dict) -> UNet:
     data_cfg = config["data"]
     model_cfg = config["model"]
-    channel_mults = model_cfg["channel_mults"]
-    _validate_image_size(int(data_cfg["image_size"]), channel_mults)
+    channel_mults = _validate_channel_mults(model_cfg["channel_mults"])
+    image_size = _validate_image_size(data_cfg["image_size"], channel_mults)
     return UNet(
-        image_channels=int(data_cfg["channels"]),
-        base_channels=int(model_cfg["base_channels"]),
+        image_channels=_positive_int("data.channels", data_cfg["channels"]),
+        base_channels=_positive_int("model.base_channels", model_cfg["base_channels"]),
         channel_mults=channel_mults,
-        time_emb_dim=int(model_cfg["time_emb_dim"]),
-        dropout=float(model_cfg["dropout"]),
+        time_emb_dim=_positive_int("model.time_emb_dim", model_cfg["time_emb_dim"]),
+        dropout=_probability_float("model.dropout", model_cfg["dropout"]),
     )
