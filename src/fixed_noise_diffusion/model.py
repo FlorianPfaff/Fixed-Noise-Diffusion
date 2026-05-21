@@ -232,7 +232,7 @@ def build_model(config: dict) -> UNet:
     data_cfg = config["data"]
     model_cfg = config["model"]
     channel_mults = _validate_channel_mults(model_cfg["channel_mults"])
-    image_size = _validate_image_size(data_cfg["image_size"], channel_mults)
+    _validate_image_size(data_cfg["image_size"], channel_mults)
     return UNet(
         image_channels=_positive_int("data.channels", data_cfg["channels"]),
         base_channels=_positive_int("model.base_channels", model_cfg["base_channels"]),
