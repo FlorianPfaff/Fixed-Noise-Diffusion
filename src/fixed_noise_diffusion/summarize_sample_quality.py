@@ -93,6 +93,39 @@ def _quality_protocol_key(row: dict[str, str]) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _protocol_label(protocol_key: tuple[str, ...]) -> str:
+    if len(protocol_key) != len(QUALITY_PROTOCOL_COLUMNS):
+        return ""
+    protocol = {
+        column: value
+        for column, value in zip(QUALITY_PROTOCOL_COLUMNS, protocol_key, strict=True)
+        if value not in (None, "")
+    }
+    if not protocol:
+        return ""
+    columns = (
+        "sample_count",
+        "requested_real_count",
+        "real_split",
+        "sample_steps",
+        "sampler",
+        "fid_feature",
+        "kid_subset_size",
+    )
+    return ", ".join(
+        f"{column}={protocol[column]}" for column in columns if column in protocol
+    )
+
+
+def _dataset_protocol_groups(
+    rows: list[dict[str, str]],
+) -> list[tuple[str, tuple[str, ...], list[dict[str, str]]]]:
+    grouped: dict[tuple[str, tuple[str, ...]], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped[(normalize_dataset_label(row.get("dataset")), _quality_protocol_key(row))].append(row)
+    return [(dataset, protocol, grouped[(dataset, protocol)]) for dataset, protocol in sorted(grouped, key=lambda key: (_dataset_sort_key(key[0]), key[1]))]
+
+
 def normalize_dataset_label(dataset: str | None) -> str:
     if dataset is None:
         return ""
@@ -355,10 +388,18 @@ def _dataset_axes(group_count: int, width: float, height_per_group: float):
     return fig, [axis for row in axes for axis in row]
 
 
+def _plot_title(base_title: str, protocol_key: tuple[str, ...]) -> str:
+    protocol = _protocol_label(protocol_key)
+    if not protocol:
+        return base_title
+    return f"{base_title}\n{protocol}"
+
+
 def _plot_fid_by_pool_axis(
     axis,
     dataset: str,
     summary: list[dict[str, str]],
+    protocol_key: tuple[str, ...] = (),
 ) -> bool:
     fixed = [
         row
@@ -409,7 +450,12 @@ def _plot_fid_by_pool_axis(
     axis.set_xscale("log")
     axis.set_xlabel("Pool size M")
     axis.set_ylabel("FID")
-    axis.set_title(f"{_dataset_title(dataset)}: sample quality at epoch {final_epoch}")
+    axis.set_title(
+        _plot_title(
+            f"{_dataset_title(dataset)}: sample quality at epoch {final_epoch}",
+            protocol_key,
+        )
+    )
     axis.grid(True, which="both", alpha=0.25)
     axis.legend(frameon=False)
     return True
@@ -417,8 +463,8 @@ def _plot_fid_by_pool_axis(
 
 def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
     groups = [
-        (dataset, rows)
-        for dataset, rows in _dataset_groups(summary)
+        (dataset, protocol_key, rows)
+        for dataset, protocol_key, rows in _dataset_protocol_groups(summary)
         if any(
             row["kind"] == "fixed_pool" and row["pool_size"] and row.get("epoch")
             for row in rows
@@ -429,8 +475,8 @@ def plot_fid_by_pool(summary: list[dict[str, str]], output: Path) -> None:
 
     fig, axes = _dataset_axes(len(groups), width=7, height_per_group=4)
     plotted = False
-    for axis, (dataset, rows) in zip(axes, groups, strict=True):
-        plotted = _plot_fid_by_pool_axis(axis, dataset, rows) or plotted
+    for axis, (dataset, protocol_key, rows) in zip(axes, groups, strict=True):
+        plotted = _plot_fid_by_pool_axis(axis, dataset, rows, protocol_key) or plotted
     if not plotted:
         plt.close(fig)
         return
@@ -444,6 +490,7 @@ def _plot_fid_vs_gap_axis(
     axis,
     dataset: str,
     summary: list[dict[str, str]],
+    protocol_key: tuple[str, ...] = (),
 ) -> bool:
     rows = [
         row
@@ -490,7 +537,12 @@ def _plot_fid_vs_gap_axis(
             )
     axis.set_xlabel("Denoising gap")
     axis.set_ylabel("FID")
-    axis.set_title(f"{_dataset_title(dataset)}: gap vs sample quality at epoch {final_epoch}")
+    axis.set_title(
+        _plot_title(
+            f"{_dataset_title(dataset)}: gap vs sample quality at epoch {final_epoch}",
+            protocol_key,
+        )
+    )
     axis.grid(True, alpha=0.25)
     axis.legend(frameon=False)
     return True
@@ -498,8 +550,8 @@ def _plot_fid_vs_gap_axis(
 
 def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
     groups = [
-        (dataset, rows)
-        for dataset, rows in _dataset_groups(summary)
+        (dataset, protocol_key, rows)
+        for dataset, protocol_key, rows in _dataset_protocol_groups(summary)
         if any(
             row.get("denoising_gap_mean", "") != ""
             and row.get("fid_mean", "") != ""
@@ -511,8 +563,8 @@ def plot_fid_vs_gap(summary: list[dict[str, str]], output: Path) -> None:
 
     fig, axes = _dataset_axes(len(groups), width=6, height_per_group=4)
     plotted = False
-    for axis, (dataset, rows) in zip(axes, groups, strict=True):
-        plotted = _plot_fid_vs_gap_axis(axis, dataset, rows) or plotted
+    for axis, (dataset, protocol_key, rows) in zip(axes, groups, strict=True):
+        plotted = _plot_fid_vs_gap_axis(axis, dataset, rows, protocol_key) or plotted
     if not plotted:
         plt.close(fig)
         return
