@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
 from .config import add_config_args, load_config, save_config
@@ -307,7 +307,7 @@ def train(config: dict[str, Any]) -> Path:
         weight_decay=float(config["training"].get("weight_decay", 0.0)),
     )
     amp_enabled = bool(config["training"].get("amp", True)) and device.type == "cuda"
-    scaler = GradScaler(enabled=amp_enabled)
+    scaler = GradScaler("cuda", enabled=amp_enabled)
     train_timestep_generator = generator_for(device, int(config["seed"]) + 60_000)
 
     logger.log(
@@ -364,7 +364,7 @@ def train(config: dict[str, Any]) -> Path:
                 total_train_batches,
                 grad_accum_steps,
             )
-            with autocast(enabled=amp_enabled):
+            with autocast("cuda", enabled=amp_enabled):
                 pred_noise = model(noisy, timesteps)
                 loss = F.mse_loss(pred_noise, noise, reduction="mean")
                 scaled_loss = loss / accumulation_steps
