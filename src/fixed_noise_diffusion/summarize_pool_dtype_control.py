@@ -42,8 +42,25 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "", "none", "null"}:
+            return False
+    return bool(value)
+
+
 def _noise_cfg(config: dict[str, Any]) -> dict[str, Any]:
     value = config.get("noise")
+    return value if isinstance(value, dict) else {}
+
+
+def _metadata_noise(metadata: dict[str, Any]) -> dict[str, Any]:
+    value = metadata.get("noise")
     return value if isinstance(value, dict) else {}
 
 
@@ -56,13 +73,36 @@ def _data_cfg(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any
 
 
 def _pool_size(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any]) -> int | None:
-    raw_meta_noise = metadata.get("noise")
-    meta_noise = raw_meta_noise if isinstance(raw_meta_noise, dict) else {}
+    meta_noise = _metadata_noise(metadata)
     for value in (row.get("pool_size"), meta_noise.get("pool_size"), _noise_cfg(config).get("pool_size")):
         parsed = _as_int(value)
         if parsed is not None:
             return parsed
     return None
+
+
+def _noise_mode(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any]) -> str:
+    noise_cfg = _noise_cfg(config)
+    meta_noise = _metadata_noise(metadata)
+    return str(row.get("noise_mode") or meta_noise.get("mode") or noise_cfg.get("mode") or "")
+
+
+def _pool_whiten(config: dict[str, Any], metadata: dict[str, Any], row: dict[str, Any]) -> bool:
+    noise_cfg = _noise_cfg(config)
+    meta_noise = _metadata_noise(metadata)
+    mode = _noise_mode(config, metadata, row)
+    if "whitened" in row:
+        return _as_bool(row.get("whitened"))
+    if "whiten" in row:
+        return _as_bool(row.get("whiten"))
+    if "whiten" in meta_noise:
+        return _as_bool(meta_noise.get("whiten"))
+    return _as_bool(noise_cfg.get("whiten", False)) or mode == "fixed_pool_whitened"
+
+
+def _protocol_label(row: dict[str, Any]) -> str:
+    whiten = "whitened" if _as_bool(row.get("whiten", False)) else "raw"
+    return f"{row['pool_dtype']} / {row['noise_mode']} / {whiten}"
 
 
 def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
@@ -84,6 +124,7 @@ def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
             pool_size = _pool_size(config, metadata, row)
             if pool_size is None:
                 continue
+            noise_mode = _noise_mode(config, metadata, row)
             rows.append(
                 {
                     "run_name": config.get("run_name") or metadata.get("run_name") or summary.get("run_name") or run_dir.name,
@@ -91,6 +132,8 @@ def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
                     "seed": config.get("seed", metadata.get("seed", summary.get("seed", ""))),
                     "pool_size": pool_size,
                     "pool_dtype": dtype,
+                    "noise_mode": noise_mode,
+                    "whiten": _pool_whiten(config, metadata, row),
                     "epoch": int(row["epoch"]),
                     "step": int(row.get("step", 0)),
                     "train_den_loss": float(row["train_den_loss"]),
@@ -103,19 +146,28 @@ def read_eval_rows(root: Path, epoch: int | None = 100) -> list[dict[str, Any]]:
 
 
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, int, int, str], list[float]] = defaultdict(list)
+    grouped: dict[tuple[str, int, int, str, str, bool], list[float]] = defaultdict(list)
     for row in rows:
-        key = (str(row["dataset"]), int(row["pool_size"]), int(row["epoch"]), str(row["pool_dtype"]))
+        key = (
+            str(row["dataset"]),
+            int(row["pool_size"]),
+            int(row["epoch"]),
+            str(row["pool_dtype"]),
+            str(row.get("noise_mode", "")),
+            _as_bool(row.get("whiten", False)),
+        )
         grouped[key].append(float(row["denoising_gap"]))
 
     summary: list[dict[str, Any]] = []
-    for (dataset, pool_size, epoch, dtype), gaps in sorted(grouped.items()):
+    for (dataset, pool_size, epoch, dtype, noise_mode, whiten), gaps in sorted(grouped.items()):
         gap_std = stdev(gaps) if len(gaps) > 1 else 0.0
         summary.append(
             {
                 "dataset": dataset,
                 "pool_size": pool_size,
                 "pool_dtype": dtype,
+                "noise_mode": noise_mode,
+                "whiten": whiten,
                 "epoch": epoch,
                 "n": len(gaps),
                 "denoising_gap_mean": mean(gaps),
@@ -124,10 +176,29 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "float32_minus_float16_gap_mean": "",
             }
         )
-    by_key = {(row["dataset"], row["pool_size"], row["epoch"], row["pool_dtype"]): row for row in summary}
+    by_key = {
+        (
+            row["dataset"],
+            row["pool_size"],
+            row["epoch"],
+            row["pool_dtype"],
+            row["noise_mode"],
+            row["whiten"],
+        ): row
+        for row in summary
+    }
     for row in summary:
         other_dtype = "float16" if row["pool_dtype"] == "float32" else "float32"
-        other = by_key.get((row["dataset"], row["pool_size"], row["epoch"], other_dtype))
+        other = by_key.get(
+            (
+                row["dataset"],
+                row["pool_size"],
+                row["epoch"],
+                other_dtype,
+                row["noise_mode"],
+                row["whiten"],
+            )
+        )
         if other is not None:
             float32 = row if row["pool_dtype"] == "float32" else other
             float16 = row if row["pool_dtype"] == "float16" else other
@@ -152,15 +223,15 @@ def plot_summary(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     fig, ax = plt.subplots(figsize=(6.2, 3.6), constrained_layout=True)
-    for dtype in sorted({row["pool_dtype"] for row in rows}):
-        dtype_rows = sorted((row for row in rows if row["pool_dtype"] == dtype), key=lambda row: int(row["pool_size"]))
+    for label in sorted({_protocol_label(row) for row in rows}):
+        label_rows = sorted((row for row in rows if _protocol_label(row) == label), key=lambda row: int(row["pool_size"]))
         ax.errorbar(
-            [int(row["pool_size"]) for row in dtype_rows],
-            [float(row["denoising_gap_mean"]) for row in dtype_rows],
-            yerr=[float(row["denoising_gap_std"]) for row in dtype_rows],
+            [int(row["pool_size"]) for row in label_rows],
+            [float(row["denoising_gap_mean"]) for row in label_rows],
+            yerr=[float(row["denoising_gap_std"]) for row in label_rows],
             marker="o",
             capsize=3,
-            label=dtype,
+            label=label,
         )
     ax.axhline(0.0, linewidth=0.8)
     ax.set_xscale("log")
@@ -195,6 +266,8 @@ def main() -> None:
             "seed",
             "pool_size",
             "pool_dtype",
+            "noise_mode",
+            "whiten",
             "epoch",
             "step",
             "train_den_loss",
@@ -210,6 +283,8 @@ def main() -> None:
             "dataset",
             "pool_size",
             "pool_dtype",
+            "noise_mode",
+            "whiten",
             "epoch",
             "n",
             "denoising_gap_mean",
