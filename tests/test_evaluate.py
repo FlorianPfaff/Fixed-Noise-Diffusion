@@ -66,6 +66,7 @@ def test_optional_fid_kid_skips_too_small_batches(monkeypatch, real_count, fake_
     assert metrics["fid"] is None
     assert metrics["kid_mean"] is None
     assert metrics["kid_std"] is None
+    assert metrics["fid_feature"] == 64
     assert "at least two" in str(metrics["metrics_error"])
 
 
@@ -112,7 +113,13 @@ def test_optional_fid_kid_caps_kid_subset_size_by_smaller_batch(monkeypatch):
     )
 
     assert subset_sizes == [3]
-    assert metrics == {"fid": 12.0, "kid_mean": 0.5, "kid_std": 0.25, "metrics_error": None}
+    assert metrics == {
+        "fid": 12.0,
+        "kid_mean": 0.5,
+        "kid_std": 0.25,
+        "fid_feature": 64,
+        "metrics_error": None,
+    }
 
 
 def test_optional_fid_kid_strict_mode_raises_on_invalid_metric_request():
