@@ -3,6 +3,7 @@ import pytest
 from fixed_noise_diffusion.evaluate_sample_quality import (
     _evaluation_seed,
     _parse_run_metadata,
+    _positive_cli_int,
     _requested_real_count,
 )
 from fixed_noise_diffusion.utils import seed_everything
@@ -50,3 +51,12 @@ def test_requested_real_count_rejects_nonpositive_counts(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         _requested_real_count(real_count=real_count, sample_count=sample_count)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("--sample-batch-size", 0), ("--sample-batch-size", -1), ("--sample-steps", 0)],
+)
+def test_positive_cli_int_rejects_nonpositive_values(name, value) -> None:
+    with pytest.raises(ValueError, match=name):
+        _positive_cli_int(name, value)

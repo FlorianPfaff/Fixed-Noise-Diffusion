@@ -22,6 +22,7 @@ CSV_FIELDS = [
     "fid",
     "kid_mean",
     "kid_std",
+    "metrics_error",
     "lr",
     "seconds",
     "noise_mode",

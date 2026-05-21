@@ -129,28 +129,47 @@ def optional_fid_kid(
     real_images: torch.Tensor,
     fake_images: torch.Tensor,
     device: torch.device,
-) -> dict[str, float | None]:
+    strict: bool = False,
+) -> dict[str, float | str | None]:
+    def empty_metrics(error: str | None = None) -> dict[str, float | str | None]:
+        return {"fid": None, "kid_mean": None, "kid_std": None, "metrics_error": error}
+
+    def failed_metrics(message: str) -> dict[str, float | str | None]:
+        if strict:
+            raise RuntimeError(message)
+        return empty_metrics(message)
+
     if real_images.numel() == 0 or fake_images.numel() == 0:
-        return {"fid": None, "kid_mean": None, "kid_std": None}
+        return failed_metrics(
+            "FID/KID require non-empty real and fake image batches; "
+            f"got real_images.numel()={real_images.numel()} and "
+            f"fake_images.numel()={fake_images.numel()}"
+        )
     min_image_count = min(int(real_images.shape[0]), int(fake_images.shape[0]))
     if min_image_count < 2:
-        return {"fid": None, "kid_mean": None, "kid_std": None}
+        return failed_metrics(
+            "FID/KID require at least two real and fake images; "
+            f"got real_count={int(real_images.shape[0])} and "
+            f"fake_count={int(fake_images.shape[0])}"
+        )
     try:
         from torchmetrics.image.fid import FrechetInceptionDistance
         from torchmetrics.image.kid import KernelInceptionDistance
-    except Exception:
-        return {"fid": None, "kid_mean": None, "kid_std": None}
+    except Exception as exc:
+        return failed_metrics(f"Unable to import TorchMetrics FID/KID metrics: {exc!r}")
 
     real_uint8 = _to_uint8(real_images).to(device)
     fake_uint8 = _to_uint8(fake_images).to(device)
     fid_value: float | None = None
+    errors: list[str] = []
     try:
         fid = FrechetInceptionDistance(feature=64, normalize=False).to(device)
         fid.update(real_uint8, real=True)
         fid.update(fake_uint8, real=False)
         fid_value = float(fid.compute().item())
-    except Exception:
+    except Exception as exc:
         fid_value = None
+        errors.append(f"FID computation failed: {exc!r}")
 
     kid_mean_value: float | None = None
     kid_std_value: float | None = None
@@ -166,13 +185,20 @@ def optional_fid_kid(
             kid_mean, kid_std = kid.compute()
             kid_mean_value = float(kid_mean.item())
             kid_std_value = float(kid_std.item())
-        except Exception:
+        except Exception as exc:
+            errors.append(f"KID computation failed: {exc!r}")
             kid_mean_value = None
             kid_std_value = None
+
+    metrics_error = "; ".join(errors) if errors else None
+    if strict and metrics_error is not None:
+        raise RuntimeError(metrics_error)
+
     return {
         "fid": fid_value,
         "kid_mean": kid_mean_value,
         "kid_std": kid_std_value,
+        "metrics_error": metrics_error,
     }
 
 

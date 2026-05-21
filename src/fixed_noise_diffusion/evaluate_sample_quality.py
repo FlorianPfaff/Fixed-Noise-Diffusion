@@ -134,6 +134,9 @@ def _generate_fake_metrics(
     grid_count: int,
     grid_path: Path,
 ) -> int:
+    sample_count = _positive_cli_int("sample_count", sample_count)
+    sample_batch_size = _positive_cli_int("sample_batch_size", sample_batch_size)
+    sample_steps = _positive_cli_int("sample_steps", sample_steps)
     data_cfg = config["data"]
     image_shape = (
         int(data_cfg["channels"]),
@@ -183,13 +186,15 @@ def evaluate_run_epoch(
     condition, run_seed = run_identity_from_config(run_dir, config)
     seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
     sample_count = _positive_cli_int("--sample-count", args.sample_count)
+    sample_batch_size = _positive_cli_int("--sample-batch-size", args.sample_batch_size)
+    sample_steps = _positive_cli_int("--sample-steps", args.sample_steps)
     requested_real_count = _requested_real_count(args.real_count, sample_count)
     config = _prepare_config(
         config,
         sample_count=sample_count,
         real_count=requested_real_count,
-        sample_batch_size=args.sample_batch_size,
-        sample_steps=args.sample_steps,
+        sample_batch_size=sample_batch_size,
+        sample_steps=sample_steps,
         sampler=args.sampler,
         real_split=args.real_split,
         download_data=bool(args.download_data),
@@ -225,8 +230,8 @@ def evaluate_run_epoch(
         fid=fid,
         kid=kid,
         sample_count=sample_count,
-        sample_batch_size=args.sample_batch_size,
-        sample_steps=args.sample_steps,
+        sample_batch_size=sample_batch_size,
+        sample_steps=sample_steps,
         sampler=args.sampler,
         seed=_evaluation_seed(args.seed, run_seed, epoch, offset=50_000),
         grid_count=args.grid_count,
@@ -253,7 +258,7 @@ def evaluate_run_epoch(
         "real_split": args.real_split,
         "real_count": real_count,
         "fake_count": fake_count,
-        "sample_steps": args.sample_steps,
+        "sample_steps": sample_steps,
         "sampler": args.sampler,
         "fid_feature": args.fid_feature,
         "kid_subset_size": kid_subset_size,

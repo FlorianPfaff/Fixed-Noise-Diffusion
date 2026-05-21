@@ -104,7 +104,9 @@ def load_checkpoint_pool_fingerprint(
     checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
     if not checkpoint_path.is_file():
         raise FileNotFoundError(checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    # The fingerprint is CPU metadata. Avoid moving the full checkpoint,
+    # including optimizer tensors, to CUDA just to inspect this field.
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     fingerprint = checkpoint.get("train_noise_pool_fingerprint")
     if fingerprint is None:
         return None

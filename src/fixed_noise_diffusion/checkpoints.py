@@ -29,10 +29,13 @@ def load_checkpoint_model(
     checkpoint_path = run_dir / "checkpoints" / f"epoch_{epoch:04d}.pt"
     if not checkpoint_path.is_file():
         raise FileNotFoundError(checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    # Load on CPU first: training checkpoints contain optimizer state, and
+    # mapping the entire checkpoint to CUDA can OOM before the optimizer state
+    # is discarded for evaluation.
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     config = checkpoint.get("config") or load_yaml(run_dir / "config.yaml")
-    model = build_model(config).to(device)
+    model = build_model(config)
     model.load_state_dict(checkpoint["model"])
-    model.eval()
+    model.to(device).eval()
     diffusion = GaussianDiffusion.from_config(config, device)
     return model, diffusion, config, int(checkpoint.get("step", 0))
