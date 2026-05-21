@@ -142,6 +142,21 @@ jobs:
             fi
           fi
 
+      - name: Require CUDA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.cuda_visible_devices }}" ]; then
+            export CUDA_VISIBLE_DEVICES="${{ inputs.cuda_visible_devices }}"
+          fi
+          "${FND_PYTHON}" - <<'PY'
+          import torch
+
+          if not torch.cuda.is_available():
+              raise SystemExit("CUDA is required for this workflow")
+          print(f"device={torch.cuda.get_device_name(0)}")
+          PY
+
       - name: Ensure STL-10 dataset cache
         uses: ./.github/actions/ensure-torchvision-dataset
         with:

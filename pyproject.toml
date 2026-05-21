@@ -22,8 +22,14 @@ metrics = [
   "torchmetrics[image]>=1.4",
   "torch-fidelity>=0.3",
 ]
+pytorch = [
+  "torch",
+  "torchvision",
+]
 test = [
   "pytest>=8.0",
+  "torch",
+  "torchvision",
 ]
 
 [tool.setuptools.packages.find]

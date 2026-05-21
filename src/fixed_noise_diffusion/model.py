@@ -18,21 +18,27 @@ class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = int(dim)
+        if self.dim < 1:
+            raise ValueError("time_emb_dim must be positive")
 
     def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
-        half = self.dim // 2
-        if half <= 1:
+        if self.dim == 1:
             return timesteps.float().unsqueeze(1)
-        exponent = (
-            -math.log(10_000)
-            * torch.arange(
-                half,
-                device=timesteps.device,
-                dtype=torch.float32,
+
+        half = self.dim // 2
+        if half == 1:
+            freqs = torch.ones(1, device=timesteps.device, dtype=torch.float32)
+        else:
+            exponent = (
+                -math.log(10_000)
+                * torch.arange(
+                    half,
+                    device=timesteps.device,
+                    dtype=torch.float32,
+                )
+                / (half - 1)
             )
-            / (half - 1)
-        )
-        freqs = exponent.exp()
+            freqs = exponent.exp()
         args = timesteps.float().unsqueeze(1) * freqs.unsqueeze(0)
         embedding = torch.cat([args.sin(), args.cos()], dim=1)
         if embedding.shape[1] < self.dim:
