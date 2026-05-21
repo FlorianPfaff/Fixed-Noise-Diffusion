@@ -2,6 +2,7 @@ import csv
 
 from fixed_noise_diffusion.summarize_sample_quality import (
     _dataset_groups,
+    _dataset_protocol_groups,
     canonical_condition,
     condition_from_row,
     condition_kind,
@@ -559,3 +560,28 @@ def test_gap_merge_requires_matching_epoch(tmp_path):
     )
 
     assert merged[0]["denoising_gap_mean"] == "0.12"
+
+
+def test_dataset_protocol_groups_keep_quality_protocols_separate():
+    rows = [
+        {
+            "dataset": "cifar10",
+            "condition": "fixed_pool_1k",
+            "sample_count": "2048",
+            "requested_real_count": "2048",
+            "real_split": "val",
+        },
+        {
+            "dataset": "cifar10",
+            "condition": "fixed_pool_1k",
+            "sample_count": "4096",
+            "requested_real_count": "4096",
+            "real_split": "train",
+        },
+    ]
+
+    groups = _dataset_protocol_groups(rows)
+
+    assert len(groups) == 2
+    assert [dataset for dataset, _, _ in groups] == ["cifar10", "cifar10"]
+    assert [group[0]["sample_count"] for _, _, group in groups] == ["2048", "4096"]

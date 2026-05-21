@@ -2,6 +2,8 @@ import pytest
 
 from fixed_noise_diffusion.evaluate_sample_quality import (
     _evaluation_seed,
+    _metric_population_count,
+    _nonnegative_cli_int,
     _parse_run_metadata,
     _positive_cli_int,
     _requested_real_count,
@@ -40,8 +42,10 @@ def test_requested_real_count_preserves_explicit_positive_count() -> None:
     [
         (0, 64, "--real-count"),
         (-1, 64, "--real-count"),
+        (1, 64, "--real-count"),
         (None, 0, "--sample-count"),
         (None, -1, "--sample-count"),
+        (None, 1, "--sample-count"),
     ],
 )
 def test_requested_real_count_rejects_nonpositive_counts(
@@ -53,6 +57,12 @@ def test_requested_real_count_rejects_nonpositive_counts(
         _requested_real_count(real_count=real_count, sample_count=sample_count)
 
 
+def test_metric_population_count_requires_two_images_for_metrics() -> None:
+    assert _metric_population_count("--sample-count", 2) == 2
+    with pytest.raises(ValueError, match="--sample-count"):
+        _metric_population_count("--sample-count", 1)
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [("--sample-batch-size", 0), ("--sample-batch-size", -1), ("--sample-steps", 0)],
@@ -60,3 +70,10 @@ def test_requested_real_count_rejects_nonpositive_counts(
 def test_positive_cli_int_rejects_nonpositive_values(name, value) -> None:
     with pytest.raises(ValueError, match=name):
         _positive_cli_int(name, value)
+
+
+def test_nonnegative_cli_int_allows_zero_grid_count_only() -> None:
+    assert _nonnegative_cli_int("--grid-count", 0) == 0
+    assert _nonnegative_cli_int("--grid-count", 1) == 1
+    with pytest.raises(ValueError, match="--grid-count"):
+        _nonnegative_cli_int("--grid-count", -1)

@@ -17,6 +17,7 @@ from .checkpoints import load_checkpoint_model, parse_int_list
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import denoising_loss_from_timesteps
+from .evaluate_pool_generalization import verify_train_pool_fingerprint
 from .noise import GaussianNoiseSampler, make_noise_sampler
 from .plotting import save_figure
 from .summarize_sample_quality import condition_kind, condition_pool_size, normalize_dataset_label
@@ -115,6 +116,9 @@ def evaluate_run(
             model, diffusion, config, step = load_checkpoint_model(
                 run_dir, epoch, device
             )
+        train_pool_fingerprint_sha256 = verify_train_pool_fingerprint(
+            run_dir, epoch, train_base_sampler, device
+        )
         for timestep in timesteps:
             if timestep < 0 or timestep >= diffusion.num_timesteps:
                 raise ValueError(
@@ -169,6 +173,7 @@ def evaluate_run(
                     "gaussian_noise_loss": gaussian_loss,
                     "timestep_gap": gaussian_loss - train_loss,
                     "noise_mode": info.mode,
+                    "train_pool_fingerprint_sha256": train_pool_fingerprint_sha256,
                     "pool_memory_mb": round(info.pool_memory_mb, 3),
                     "seconds": round(time.perf_counter() - start, 3),
                     "source_run_dir": str(run_dir),

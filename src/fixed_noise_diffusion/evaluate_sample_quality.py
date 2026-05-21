@@ -38,18 +38,33 @@ def _evaluation_seed(
     return int(base_seed) + int(offset) + seed_component * 1000 + int(epoch)
 
 
-def _positive_cli_int(name: str, value: int) -> int:
+def _at_least_cli_int(name: str, value: int, minimum: int) -> int:
     parsed = int(value)
-    if parsed < 1:
-        raise ValueError(f"{name} must be at least 1")
+    if parsed < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return parsed
+
+
+def _positive_cli_int(name: str, value: int) -> int:
+    return _at_least_cli_int(name, value, minimum=1)
+
+
+def _metric_population_count(name: str, value: int) -> int:
+    return _at_least_cli_int(name, value, minimum=2)
+
+
+def _nonnegative_cli_int(name: str, value: int) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
     return parsed
 
 
 def _requested_real_count(real_count: int | None, sample_count: int) -> int:
-    sample_count = _positive_cli_int("--sample-count", sample_count)
+    sample_count = _metric_population_count("--sample-count", sample_count)
     if real_count is None:
         return sample_count
-    return _positive_cli_int("--real-count", real_count)
+    return _metric_population_count("--real-count", real_count)
 
 
 def _prepare_config(
@@ -134,9 +149,10 @@ def _generate_fake_metrics(
     grid_count: int,
     grid_path: Path,
 ) -> int:
-    sample_count = _positive_cli_int("sample_count", sample_count)
+    sample_count = _metric_population_count("sample_count", sample_count)
     sample_batch_size = _positive_cli_int("sample_batch_size", sample_batch_size)
     sample_steps = _positive_cli_int("sample_steps", sample_steps)
+    grid_count = _nonnegative_cli_int("grid_count", grid_count)
     data_cfg = config["data"]
     image_shape = (
         int(data_cfg["channels"]),
@@ -185,10 +201,12 @@ def evaluate_run_epoch(
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
     condition, run_seed = run_identity_from_config(run_dir, config)
     seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
-    sample_count = _positive_cli_int("--sample-count", args.sample_count)
+    sample_count = _metric_population_count("--sample-count", args.sample_count)
+    requested_real_count = _requested_real_count(args.real_count, sample_count)
     sample_batch_size = _positive_cli_int("--sample-batch-size", args.sample_batch_size)
     sample_steps = _positive_cli_int("--sample-steps", args.sample_steps)
-    requested_real_count = _requested_real_count(args.real_count, sample_count)
+    grid_count = _nonnegative_cli_int("--grid-count", args.grid_count)
+    requested_kid_subset_size = _at_least_cli_int("--kid-subset-size", args.kid_subset_size, 2)
     config = _prepare_config(
         config,
         sample_count=sample_count,
@@ -202,7 +220,7 @@ def evaluate_run_epoch(
 
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
     kid_subset_size = effective_kid_subset_size(
-        args.kid_subset_size,
+        requested_kid_subset_size,
         sample_count,
         requested_real_count,
     )
@@ -234,7 +252,7 @@ def evaluate_run_epoch(
         sample_steps=sample_steps,
         sampler=args.sampler,
         seed=_evaluation_seed(args.seed, run_seed, epoch, offset=50_000),
-        grid_count=args.grid_count,
+        grid_count=grid_count,
         grid_path=grid_path,
     )
     kid_mean = kid_std = None
