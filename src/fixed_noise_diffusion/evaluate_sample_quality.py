@@ -38,6 +38,20 @@ def _evaluation_seed(
     return int(base_seed) + int(offset) + seed_component * 1000 + int(epoch)
 
 
+def _positive_cli_int(name: str, value: int) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return parsed
+
+
+def _requested_real_count(real_count: int | None, sample_count: int) -> int:
+    sample_count = _positive_cli_int("--sample-count", sample_count)
+    if real_count is None:
+        return sample_count
+    return _positive_cli_int("--real-count", real_count)
+
+
 def _prepare_config(
     config: dict[str, Any],
     sample_count: int,
@@ -168,10 +182,12 @@ def evaluate_run_epoch(
     model, diffusion, config, step = load_checkpoint_model(run_dir, epoch, device)
     condition, run_seed = run_identity_from_config(run_dir, config)
     seed_everything(args.seed + max(run_seed, 0) * 1000 + epoch)
+    sample_count = _positive_cli_int("--sample-count", args.sample_count)
+    requested_real_count = _requested_real_count(args.real_count, sample_count)
     config = _prepare_config(
         config,
-        sample_count=args.sample_count,
-        real_count=args.real_count or args.sample_count,
+        sample_count=sample_count,
+        real_count=requested_real_count,
         sample_batch_size=args.sample_batch_size,
         sample_steps=args.sample_steps,
         sampler=args.sampler,
@@ -179,11 +195,10 @@ def evaluate_run_epoch(
         download_data=bool(args.download_data),
     )
 
-    requested_real_count = int(args.real_count or args.sample_count)
     fid = FrechetInceptionDistance(feature=args.fid_feature, normalize=False).to(device)
     kid_subset_size = effective_kid_subset_size(
         args.kid_subset_size,
-        args.sample_count,
+        sample_count,
         requested_real_count,
     )
     kid = None
@@ -209,7 +224,7 @@ def evaluate_run_epoch(
         device=device,
         fid=fid,
         kid=kid,
-        sample_count=args.sample_count,
+        sample_count=sample_count,
         sample_batch_size=args.sample_batch_size,
         sample_steps=args.sample_steps,
         sampler=args.sampler,
@@ -233,7 +248,7 @@ def evaluate_run_epoch(
         "pool_dtype": str(noise_cfg.get("pool_dtype", "")),
         "epoch": epoch,
         "step": step,
-        "sample_count": args.sample_count,
+        "sample_count": sample_count,
         "requested_real_count": requested_real_count,
         "real_split": args.real_split,
         "real_count": real_count,

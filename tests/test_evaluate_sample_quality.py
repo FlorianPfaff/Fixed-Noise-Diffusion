@@ -1,6 +1,9 @@
+import pytest
+
 from fixed_noise_diffusion.evaluate_sample_quality import (
     _evaluation_seed,
     _parse_run_metadata,
+    _requested_real_count,
 )
 from fixed_noise_diffusion.utils import seed_everything
 
@@ -21,3 +24,29 @@ def test_wp2_run_name_preserves_seed_component():
     assert condition == "fixed_pool"
     assert run_seed == 3
     assert _evaluation_seed(7, run_seed, epoch=5) == 3012
+
+
+def test_requested_real_count_defaults_to_sample_count() -> None:
+    assert _requested_real_count(real_count=None, sample_count=64) == 64
+
+
+def test_requested_real_count_preserves_explicit_positive_count() -> None:
+    assert _requested_real_count(real_count=32, sample_count=64) == 32
+
+
+@pytest.mark.parametrize(
+    ("real_count", "sample_count", "match"),
+    [
+        (0, 64, "--real-count"),
+        (-1, 64, "--real-count"),
+        (None, 0, "--sample-count"),
+        (None, -1, "--sample-count"),
+    ],
+)
+def test_requested_real_count_rejects_nonpositive_counts(
+    real_count,
+    sample_count,
+    match,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _requested_real_count(real_count=real_count, sample_count=sample_count)
