@@ -49,8 +49,23 @@ def _directory_preview(path: Path, max_entries: int = 8) -> str:
     return preview
 
 
+def _validate_run_name(run_name: str | Path) -> str:
+    run_name_str = str(run_name)
+    run_name_path = Path(run_name_str)
+    if (
+        run_name_str.strip() in {"", "."}
+        or run_name_path.is_absolute()
+        or any(part == ".." for part in run_name_path.parts)
+    ):
+        raise ValueError(
+            "run_name must be a relative path inside output_dir and must not "
+            "be empty, '.', absolute, or contain '..' components"
+        )
+    return run_name_str
+
+
 def make_run_dir(output_dir: str | Path, run_name: str, *, overwrite: bool = False) -> Path:
-    run_dir = Path(output_dir) / run_name
+    run_dir = Path(output_dir) / _validate_run_name(run_name)
     if run_dir.exists():
         if not run_dir.is_dir():
             raise FileExistsError(

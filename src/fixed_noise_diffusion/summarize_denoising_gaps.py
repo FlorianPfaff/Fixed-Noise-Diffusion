@@ -12,6 +12,17 @@ from .sweep import select_run_dirs
 from .utils import format_float, sample_mean, sample_sem, sample_std, write_csv_rows
 
 
+PROTOCOL_COLUMNS = [
+    "beta_schedule",
+    "num_timesteps",
+    "image_size",
+    "channels",
+    "base_channels",
+    "channel_mults",
+    "time_emb_dim",
+]
+
+
 SUMMARY_COLUMNS = [
     "dataset",
     "experiment",
@@ -19,6 +30,7 @@ SUMMARY_COLUMNS = [
     "noise_mode",
     "condition",
     "pool_size",
+    *PROTOCOL_COLUMNS,
     "epoch",
     "n",
     "denoising_gap_mean",
@@ -34,6 +46,7 @@ COMBINED_COLUMNS = [
     "noise_mode",
     "condition",
     "pool_size",
+    *PROTOCOL_COLUMNS,
     "seed",
     "epoch",
     "step",
@@ -78,6 +91,33 @@ def _dataset_label(config: dict[str, Any]) -> str:
     return dataset or "unknown"
 
 
+def _string_value(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _channel_mults_label(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def _protocol_info(config: dict[str, Any]) -> dict[str, str]:
+    data_cfg = config.get("data", {}) if isinstance(config.get("data", {}), dict) else {}
+    model_cfg = config.get("model", {}) if isinstance(config.get("model", {}), dict) else {}
+    diffusion_cfg = config.get("diffusion", {}) if isinstance(config.get("diffusion", {}), dict) else {}
+    return {
+        "beta_schedule": _string_value(diffusion_cfg.get("beta_schedule")),
+        "num_timesteps": _string_value(diffusion_cfg.get("num_timesteps")),
+        "image_size": _string_value(data_cfg.get("image_size")),
+        "channels": _string_value(data_cfg.get("channels")),
+        "base_channels": _string_value(model_cfg.get("base_channels")),
+        "channel_mults": _channel_mults_label(model_cfg.get("channel_mults")),
+        "time_emb_dim": _string_value(model_cfg.get("time_emb_dim")),
+    }
+
+
 def _pool_label(pool_size: int) -> str:
     if pool_size >= 1000 and pool_size % 1000 == 0:
         return f"{pool_size // 1000}k"
@@ -117,25 +157,31 @@ def _pool_sort_value(row: dict[str, str]) -> int:
     return int(row["pool_size"]) if row["pool_size"] else 10**18
 
 
-def _combined_sort_key(item: dict[str, str]) -> tuple[str, str, str, int, str, int, int]:
+def _protocol_sort_value(item: dict[str, str]) -> tuple[str, ...]:
+    return tuple(item.get(column, "") for column in PROTOCOL_COLUMNS)
+
+
+def _combined_sort_key(item: dict[str, str]) -> tuple[Any, ...]:
     return (
         item["dataset"],
         item["experiment"],
         item["family"],
         _pool_sort_value(item),
         item["condition"],
+        _protocol_sort_value(item),
         int(item["epoch"]),
         int(item["seed"] or -1),
     )
 
 
-def _summary_sort_key(item: dict[str, str]) -> tuple[str, str, str, int, str, int]:
+def _summary_sort_key(item: dict[str, str]) -> tuple[Any, ...]:
     return (
         item["dataset"],
         item["experiment"],
         item["family"],
         _pool_sort_value(item),
         item["condition"],
+        _protocol_sort_value(item),
         int(item["epoch"]),
     )
 
@@ -149,6 +195,7 @@ def collect_rows(run_dirs: list[Path], epochs: set[int] | None) -> list[dict[str
         config = _read_yaml(config_path)
         dataset = _dataset_label(config)
         seed = _run_seed(config, run_dir)
+        protocol = _protocol_info(config)
 
         for row in _read_eval_rows(run_dir):
             epoch = int(row["epoch"])
@@ -165,6 +212,7 @@ def collect_rows(run_dirs: list[Path], epochs: set[int] | None) -> list[dict[str
                     "noise_mode": noise_mode,
                     "condition": condition,
                     "pool_size": "" if pool_size is None else str(pool_size),
+                    **protocol,
                     "seed": seed,
                     "epoch": str(epoch),
                     "step": row.get("step", ""),
@@ -178,7 +226,7 @@ def collect_rows(run_dirs: list[Path], epochs: set[int] | None) -> list[dict[str
 
 
 def summarize_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    grouped: dict[tuple[str, str, str, str, str, str, str], list[dict[str, str]]] = defaultdict(list)
+    grouped: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         grouped[
             (
@@ -188,6 +236,7 @@ def summarize_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
                 row["noise_mode"],
                 row["condition"],
                 row["pool_size"],
+                *(row.get(column, "") for column in PROTOCOL_COLUMNS),
                 row["epoch"],
             )
         ].append(row)
@@ -199,7 +248,7 @@ def summarize_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             for row in group
             if row.get("denoising_gap") not in (None, "")
         ]
-        dataset, experiment, family, noise_mode, condition, pool_size, epoch = key
+        dataset, experiment, family, noise_mode, condition, pool_size, *protocol_values, epoch = key
         summary.append(
             {
                 "dataset": dataset,
@@ -208,6 +257,7 @@ def summarize_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
                 "noise_mode": noise_mode,
                 "condition": condition,
                 "pool_size": pool_size,
+                **dict(zip(PROTOCOL_COLUMNS, protocol_values, strict=True)),
                 "epoch": epoch,
                 "n": str(len(gaps)),
                 "denoising_gap_mean": format_float(sample_mean(gaps), precision=16),

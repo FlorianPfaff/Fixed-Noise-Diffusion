@@ -73,6 +73,32 @@ def test_make_run_dir_overwrite_replaces_existing_run(tmp_path):
     assert (replacement / "samples").is_dir()
 
 
+@pytest.mark.parametrize(
+    "run_name",
+    ["", ".", "..", "../outside", "nested/../../outside"],
+)
+def test_make_run_dir_rejects_parent_escaping_run_names(tmp_path, run_name):
+    with pytest.raises(ValueError, match="run_name"):
+        make_run_dir(tmp_path / "runs", run_name, overwrite=True)
+
+
+def test_make_run_dir_rejects_absolute_run_name(tmp_path):
+    with pytest.raises(ValueError, match="run_name"):
+        make_run_dir(tmp_path / "runs", tmp_path / "outside", overwrite=True)
+
+
+def test_make_run_dir_overwrite_does_not_delete_parent_escape(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "marker.txt"
+    marker.write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="run_name"):
+        make_run_dir(tmp_path / "runs", "../outside", overwrite=True)
+
+    assert marker.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_resolve_device_falls_back_for_indexed_cuda(monkeypatch):
     monkeypatch.setattr("torch.cuda.is_available", lambda: False)
     assert resolve_device("cuda:0").type == "cpu"
