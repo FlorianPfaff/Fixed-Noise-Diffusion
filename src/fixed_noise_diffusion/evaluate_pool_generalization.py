@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from .checkpoints import load_checkpoint_model, parse_int_list
+from .checkpoints import load_checkpoint_model, parse_positive_int_list
 from .data import make_dataloaders
 from .evaluate import denoising_loss
 from .noise import (
@@ -313,7 +313,7 @@ def main() -> None:
     output_dir = args.output_dir.expanduser()
     csv_path = output_dir / "pool_generalization.csv"
     jsonl_path = output_dir / "pool_generalization.jsonl"
-    epochs = parse_int_list(args.epochs)
+    epochs = parse_positive_int_list(args.epochs, name="--epochs")
     rows: list[dict[str, Any]] = []
 
     for run_dir in select_run_dirs(args.sweep_dir, args.run):
