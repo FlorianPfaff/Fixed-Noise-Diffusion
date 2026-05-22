@@ -157,7 +157,7 @@ def make_heldout_pool_sampler(
         pool_seed=int(heldout_pool_seed),
         index_seed=int(config["seed"]) + 70_000,
         dtype=str(noise_cfg.get("pool_dtype", "float16")),
-        chunk_size=int(noise_cfg.get("pool_chunk_size", 8192)),
+        chunk_size=noise_cfg.get("pool_chunk_size", 8192),
         whiten=train_noise_sampler.whiten,
     )
 
