@@ -13,7 +13,12 @@ import matplotlib.pyplot as plt
 import torch
 from torch import nn
 
-from .checkpoints import load_checkpoint_model, parse_int_list
+from .checkpoints import (
+    load_checkpoint_model,
+    parse_int_list,  # noqa: F401
+    parse_nonnegative_int_list,
+    parse_positive_int_list,
+)
 from .data import make_dataloaders
 from .diffusion import GaussianDiffusion
 from .evaluate import denoising_loss_from_timesteps
@@ -31,7 +36,6 @@ from .utils import (
     seed_everything,
     write_csv_rows,
 )
-
 
 def _prepare_config(
     config: dict[str, Any],
@@ -308,8 +312,8 @@ def main() -> None:
     output_dir = args.output_dir.expanduser()
     csv_path = output_dir / "timestep_diagnostics.csv"
     jsonl_path = output_dir / "timestep_diagnostics.jsonl"
-    epochs = parse_int_list(args.epochs)
-    timesteps = parse_int_list(args.timesteps)
+    epochs = parse_positive_int_list(args.epochs, name="--epochs")
+    timesteps = parse_nonnegative_int_list(args.timesteps, name="--timesteps")
     all_rows: list[dict[str, Any]] = []
 
     for run_dir in select_run_dirs(args.sweep_dir, args.run):

@@ -11,11 +11,30 @@ from .diffusion import GaussianDiffusion
 from .model import build_model
 
 
-def parse_int_list(raw: str) -> list[int]:
-    values = [int(part.strip()) for part in raw.split(",") if part.strip()]
+def parse_int_list(raw: str, *, name: str = "integer list", minimum: int | None = None) -> list[int]:
+    values: list[int] = []
+    for part in raw.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            value = int(item)
+        except ValueError:
+            raise ValueError(f"{name} must contain only integer values, got {item!r}") from None
+        if minimum is not None and value < minimum:
+            raise ValueError(f"{name} values must be at least {minimum}, got {value}")
+        values.append(value)
     if not values:
-        raise ValueError("At least one integer value is required")
+        raise ValueError(f"{name} must contain at least one integer value")
     return values
+
+
+def parse_positive_int_list(raw: str, *, name: str = "integer list") -> list[int]:
+    return parse_int_list(raw, name=name, minimum=1)
+
+
+def parse_nonnegative_int_list(raw: str, *, name: str = "integer list") -> list[int]:
+    return parse_int_list(raw, name=name, minimum=0)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
