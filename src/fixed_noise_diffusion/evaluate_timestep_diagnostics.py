@@ -15,7 +15,7 @@ from torch import nn
 
 from .checkpoints import (
     load_checkpoint_model,
-    parse_int_list as _parse_int_list,
+    parse_int_list,  # noqa: F401
     parse_nonnegative_int_list,
     parse_positive_int_list,
 )
@@ -36,9 +36,6 @@ from .utils import (
     seed_everything,
     write_csv_rows,
 )
-
-parse_int_list = _parse_int_list
-
 
 def _prepare_config(
     config: dict[str, Any],
